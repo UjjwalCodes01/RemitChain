@@ -1,0 +1,99 @@
+{
+  "nav": {
+    "home": "Home",
+    "contacts": "Contacts",
+    "send": "Send",
+    "schedules": "Recurring",
+    "settings": "Settings"
+  },
+  "send": {
+    "title": "Send Money",
+    "amount": "Amount",
+    "recipient": "Recipient",
+    "phone": "Phone Number",
+    "corridor": "Corridor",
+    "fee": "Fee",
+    "youSend": "You send",
+    "theyReceive": "They receive",
+    "confirm": "Confirm & Send",
+    "signing": "Signing…",
+    "broadcasting": "Sending…",
+    "success": "Sent!",
+    "voiceHint": "Tap mic to speak amount"
+  },
+  "claim": {
+    "title": "Claim Funds",
+    "enterOtp": "Enter the 6-digit OTP from the sender",
+    "submit": "Claim Funds",
+    "verifying": "Verifying…",
+    "success": "Claimed!",
+    "successBody": "Funds released to your account.",
+    "invalidOtp": "Invalid OTP. Please try again.",
+    "expired": "This transfer has expired.",
+    "cancelled": "This transfer was cancelled."
+  },
+  "tracker": {
+    "sent": "Sent",
+    "confirmed": "Confirmed on chain",
+    "notified": "Recipient notified",
+    "claimed": "Claimed",
+    "watching": "Watching for updates…",
+    "shareLink": "Recipient claim link",
+    "expires": "Expires in 48 hours",
+    "delivered": "Money delivered!"
+  },
+  "contacts": {
+    "title": "Contacts",
+    "search": "Search contacts…",
+    "add": "Add contact",
+    "pinned": "Pinned",
+    "all": "All contacts",
+    "empty": "No contacts yet",
+    "emptyBody": "Add family or friends to send in one tap.",
+    "pin": "Pin to top",
+    "unpin": "Unpin",
+    "edit": "Edit contact",
+    "delete": "Delete contact",
+    "name": "Full Name",
+    "phone": "Phone Number",
+    "phoneHint": "Include country code, e.g. +91 for India",
+    "save": "Save",
+    "addPhoto": "Tap to add photo"
+  },
+  "schedules": {
+    "title": "Recurring",
+    "empty": "No recurring transfers",
+    "emptyBody": "Schedule monthly sends to family in seconds.",
+    "new": "New schedule",
+    "active": "Active",
+    "paused": "Paused",
+    "next": "Next",
+    "pause": "Pause",
+    "resume": "Resume",
+    "delete": "Delete",
+    "frequency": {
+      "weekly": "Every week",
+      "monthly": "Every month",
+      "custom": "Custom date"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "biometric": "Biometric Lock",
+    "notifications": "Notifications",
+    "language": "Language",
+    "biometricDesc": "Lock app with Face ID / fingerprint",
+    "notifDesc": "Get notified when transfers are claimed",
+    "enable": "Enable",
+    "disable": "Disable",
+    "setup": "Set up"
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "network": "No internet connection.",
+    "wrongChain": "Please switch to QIE Testnet (Chain 1983).",
+    "insufficientBalance": "Insufficient QUSD balance.",
+    "transferExpired": "This transfer has expired.",
+    "invalidOtp": "Invalid OTP."
+  }
+}
