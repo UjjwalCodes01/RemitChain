@@ -1,0 +1,80 @@
+
+<style>
+  .cblock { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 1rem 1.25rem; margin-bottom: 1rem; }
+  .ctitle { font-size: 15px; font-weight: 500; color: var(--color-text-primary); margin: 0 0 4px; }
+  .csub { font-size: 12px; color: var(--color-text-secondary); margin: 0 0 12px; }
+  .fn-list { display: flex; flex-direction: column; gap: 6px; }
+  .fn { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; }
+  .fn-name { font-family: var(--font-mono); font-size: 12px; color: var(--color-text-info); background: var(--color-background-info); padding: 2px 8px; border-radius: var(--border-radius-md); flex-shrink: 0; }
+  .fn-desc { color: var(--color-text-secondary); line-height: 1.5; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 99px; margin-left: 6px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+  .divider { border: none; border-top: 0.5px solid var(--color-border-tertiary); margin: 12px 0; }
+  .state-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+</style>
+
+<h2 class="sr-only">RemitChain smart contract blueprint — three Solidity contracts with function signatures</h2>
+
+<div class="cblock" style="border-left: 3px solid #7F77DD; border-radius: 0 var(--border-radius-lg) var(--border-radius-lg) 0;">
+  <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+    <i class="ti ti-file-code" style="font-size:18px; color:var(--color-text-secondary);" aria-hidden="true"></i>
+    <p class="ctitle" style="margin:0;">RemitChain.sol — main router</p>
+    <span class="badge" style="background:#EEEDFE; color:#3C3489;">core</span>
+  </div>
+  <p class="csub">Entry point for all transfers. Coordinates KYC check → escrow lock → notification event.</p>
+  <div class="fn-list">
+    <div class="fn"><span class="fn-name">sendRemittance()</span><span class="fn-desc">Sender calls with recipient address/phone, amount in QUSD, destination country. Checks KYC level, locks escrow, emits event.</span></div>
+    <div class="fn"><span class="fn-name">claimRemittance()</span><span class="fn-desc">Recipient calls with transfer ID + OTP hash. Validates, triggers escrow release.</span></div>
+    <div class="fn"><span class="fn-name">cancelRemittance()</span><span class="fn-desc">Sender can cancel if unclaimed after 48h. Escrow refunds automatically.</span></div>
+    <div class="fn"><span class="fn-name">getTransferStatus()</span><span class="fn-desc">Read-only. Returns PENDING / CLAIMED / CANCELLED for any transfer ID.</span></div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="cblock" style="border-left: 3px solid #1D9E75; border-radius: 0 var(--border-radius-lg) var(--border-radius-lg) 0;">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <i class="ti ti-lock" style="font-size:18px; color:var(--color-text-secondary);" aria-hidden="true"></i>
+      <p class="ctitle" style="margin:0;">EscrowVault.sol</p>
+      <span class="badge" style="background:#E1F5EE; color:#0F6E56;">money</span>
+    </div>
+    <p class="csub">Holds QUSD in trust. Only RemitChain.sol can instruct it.</p>
+    <div class="fn-list">
+      <div class="fn"><span class="fn-name">lockFunds()</span><span class="fn-desc">Pulls QUSD from sender, mints a transfer receipt NFT as proof.</span></div>
+      <div class="fn"><span class="fn-name">releaseFunds()</span><span class="fn-desc">Sends QUSD to recipient minus 0.1% fee. Only callable by RemitChain.</span></div>
+      <div class="fn"><span class="fn-name">refundFunds()</span><span class="fn-desc">Returns full amount to sender on cancel. Burns receipt NFT.</span></div>
+    </div>
+    <hr class="divider">
+    <p style="font-size:12px; color:var(--color-text-secondary); margin:0;">Transfer states:</p>
+    <div style="margin-top:6px;">
+      <div class="state-row"><span class="dot" style="background:#EF9F27;"></span>PENDING — funds locked</div>
+      <div class="state-row"><span class="dot" style="background:#1D9E75;"></span>CLAIMED — released to recipient</div>
+      <div class="state-row"><span class="dot" style="background:#E24B4A;"></span>CANCELLED — refunded to sender</div>
+    </div>
+  </div>
+
+  <div class="cblock" style="border-left: 3px solid #D85A30; border-radius: 0 var(--border-radius-lg) var(--border-radius-lg) 0;">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <i class="ti ti-id-badge" style="font-size:18px; color:var(--color-text-secondary);" aria-hidden="true"></i>
+      <p class="ctitle" style="margin:0;">KYCRegistry.sol</p>
+      <span class="badge" style="background:#FAECE7; color:#712B13;">identity</span>
+    </div>
+    <p class="csub">Maps QIE Pass IDs to KYC levels and daily limits.</p>
+    <div class="fn-list">
+      <div class="fn"><span class="fn-name">verifyUser()</span><span class="fn-desc">Links wallet address to QIE Pass ID. Sets KYC tier (0/1/2).</span></div>
+      <div class="fn"><span class="fn-name">getKYCLevel()</span><span class="fn-desc">Returns tier for any address. Level 0 = no KYC, Level 2 = full ID.</span></div>
+      <div class="fn"><span class="fn-name">getDailyLimit()</span><span class="fn-desc">Returns QUSD limit. Tier 0: $0, Tier 1: $500/day, Tier 2: $5000/day.</span></div>
+      <div class="fn"><span class="fn-name">checkDailyUsage()</span><span class="fn-desc">Prevents breach of daily limit. Resets at midnight UTC.</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="cblock" style="background: var(--color-background-secondary);">
+  <p style="font-size: 13px; font-weight: 500; color: var(--color-text-primary); margin: 0 0 8px;">Key design decisions that impress judges</p>
+  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+    <div class="fn"><i class="ti ti-shield-check" style="font-size:16px; color:var(--color-text-success); flex-shrink:0;" aria-hidden="true"></i><span class="fn-desc">Reentrancy guard on all fund-moving functions (use OpenZeppelin ReentrancyGuard)</span></div>
+    <div class="fn"><i class="ti ti-currency-dollar" style="font-size:16px; color:var(--color-text-success); flex-shrink:0;" aria-hidden="true"></i><span class="fn-desc">No floating point — all amounts in smallest QUSD unit (6 decimal places)</span></div>
+    <div class="fn"><i class="ti ti-bell" style="font-size:16px; color:var(--color-text-success); flex-shrink:0;" aria-hidden="true"></i><span class="fn-desc">Events emitted on every state change — your frontend listens via WebSocket</span></div>
+    <div class="fn"><i class="ti ti-clock" style="font-size:16px; color:var(--color-text-success); flex-shrink:0;" aria-hidden="true"></i><span class="fn-desc">48-hour auto-expiry on unclaimed transfers — safe for the sender</span></div>
+  </div>
+</div>

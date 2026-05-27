@@ -1,0 +1,19 @@
+{
+  "network": "anvil",
+  "chainId": 31337,
+  "deployer": "0x05F7dd1f8AE283f01dbb2c31fde97f855eCF66E9",
+  "contracts": {
+    "TimelockController": "0x99F4DD67163355e0C3FF5B5790e238fC6e0b8064",
+    "KYCRegistry": "0x7cC8b442cD953ae16e93bB9C8d66BBeec2245DDd",
+    "EscrowVault": "0x813808c75F1C7688F9f41b738Db1457Ed831072B",
+    "RemitChain": "0x315454d1E9Cb03a922BBeBfC926441038282736B"
+  },
+  "config": {
+    "timelockMinDelay": 172800,
+    "initialFeeBps": 10,
+    "multisig": "0x0000000000000000000000000000000000000001",
+    "passOracle": "0x0000000000000000000000000000000000000002",
+    "qusd": "0x0000000000000000000000000000000000000003",
+    "feeTreasury": "0x0000000000000000000000000000000000000004"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "network": "qie_testnet",
+  "chainId": 1983,
+  "deployer": "0x3660362BeB3A95CE16D981e7D30E1e025E741393",
+  "contracts": {
+    "TimelockController": "0xf20b5D93fDbec6B5cc8dC6d71Ad24D2C4641Ab41",
+    "KYCRegistry": "0xB388C8cdF22Bd89F0110620A0B557baA5d9D6eF1",
+    "EscrowVault": "0x3003E7d75477c4F6836Ec117f6e9C1202e09Da84",
+    "RemitChain": "0xAf4230B61C3416DB65000B7E6A5F8A3E7568304B"
+  },
+  "config": {
+    "timelockMinDelay": 172800,
+    "initialFeeBps": 10,
+    "multisig": "0x3660362BeB3A95CE16D981e7D30E1e025E741393",
+    "passOracle": "0x3660362BeB3A95CE16D981e7D30E1e025E741393",
+    "qusd": "0x56AD1E16394Ae6F8B3204b07e988f9d37497e58f",
+    "feeTreasury": "0x3660362BeB3A95CE16D981e7D30E1e025E741393"
+  }
+}
