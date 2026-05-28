@@ -83,20 +83,21 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 3, baseDelayMs =
 
 // ── Cursor helpers ────────────────────────────────────────────────────────────
 
-async function getCursor(): Promise<bigint> {
-  if (!db) return 0n
+async function getCursor(): Promise<number> {
+  if (!db) return 0
   const rows = await db.select().from(eventCursor).limit(1)
-  return rows[0]?.lastProcessedBlock ?? 0n
+  return rows[0]?.lastProcessedBlock ?? 0
 }
 
 async function setCursor(block: bigint): Promise<void> {
   if (!db) return
+  const blockNum = Number(block)
   await db
     .insert(eventCursor)
-    .values({ id: 1, lastProcessedBlock: block, updatedAt: Date.now() })
+    .values({ lastProcessedBlock: blockNum, updatedAt: Date.now() })
     .onConflictDoUpdate({
       target: eventCursor.id,
-      set: { lastProcessedBlock: block, updatedAt: Date.now() },
+      set: { lastProcessedBlock: blockNum, updatedAt: Date.now() },
     })
 }
 
@@ -225,7 +226,7 @@ export async function pollAndProcess(): Promise<PollResult> {
   const currentBlock = await withRetry(() => publicClient.getBlockNumber())
   const safeBlock = currentBlock > CONFIRMATIONS ? currentBlock - CONFIRMATIONS : 0n
 
-  const fromBlock = await getCursor()
+  const fromBlock = BigInt(await getCursor())
 
   // Already caught up
   if (fromBlock >= safeBlock) {

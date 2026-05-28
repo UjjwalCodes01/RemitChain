@@ -3,7 +3,7 @@
 import { motion, useSpring, useMotionValueEvent, AnimatePresence } from 'motion/react'
 import { useState, useEffect, useCallback } from 'react'
 import { useAccount, useChainId, useReadContracts, useSignTypedData, useWriteContract } from 'wagmi'
-import { ArrowRight, ChevronDown, CheckCircle2, Loader2, Phone, UserCircle2 } from 'lucide-react'
+import { ArrowRight, ChevronDown, CheckCircle2, Loader2, Phone, UserCircle2, AlertCircle, X } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { encodeAbiParameters, encodePacked, keccak256, parseUnits, toHex, hexToSignature } from 'viem'
@@ -47,6 +47,7 @@ export default function SendPage() {
   const [corridorId, setCorridorId] = useState<CorridorId>('ae-in')
   const [showCorridorPicker, setShowCorridorPicker] = useState(false)
   const [sendState, setSendState] = useState<'idle' | 'signing' | 'broadcasting' | 'success'>('idle')
+  const [sendError, setSendError] = useState<string | null>(null)
   const [otpCode, setOtpCode] = useState<string | null>(null)
   const [txHash, setTxHash] = useState<string | null>(null)
 
@@ -84,8 +85,12 @@ export default function SendPage() {
 
   // ─── Web3 Hooks ────────────────────────────────────────────────────────────
 
-  // Read nonces
-  const { data: nonces, refetch: refetchNonces } = useReadContracts({
+  // Read nonces — always refetch on send to avoid stale data
+  const {
+    data: nonces,
+    refetch: refetchNonces,
+    isLoading: noncesLoading,
+  } = useReadContracts({
     contracts: [
       {
         address: QUSD_ADDRESS,
@@ -102,6 +107,9 @@ export default function SendPage() {
     ],
     query: {
       enabled: Boolean(address),
+      // Retry silently on failure — don't surface to user until send is clicked
+      retry: 3,
+      retryDelay: 1000,
     },
   })
 
@@ -112,20 +120,37 @@ export default function SendPage() {
 
   const handleSend = async () => {
     if (!address || numericAmount < 1 || !phone) return
-    if (!nonces || nonces.length < 2 || nonces[0].status !== 'success' || nonces[1].status !== 'success') {
-      alert('Failed to read nonces. Please refresh.')
+    setSendError(null)
+    setSendState('signing')
+
+    // Always fetch fresh nonces right before signing to avoid stale data
+    let freshNonces: typeof nonces
+    try {
+      const result = await refetchNonces()
+      freshNonces = result.data
+    } catch {
+      freshNonces = nonces
+    }
+
+    if (
+      !freshNonces ||
+      freshNonces.length < 2 ||
+      freshNonces[0].status !== 'success' ||
+      freshNonces[1].status !== 'success'
+    ) {
+      setSendState('idle')
+      setSendError(
+        'Could not read on-chain data. Make sure your wallet is on QIE Testnet (chain 1983) and try again.',
+      )
       return
     }
 
     try {
       const bioOk = await verifyBiometric()
-      if (!bioOk) return // Biometric cancelled or failed
-      
-      setSendState('signing')
-      await refetchNonces() // refresh right before to avoid stale nonces
+      if (!bioOk) { setSendState('idle'); return } // Biometric cancelled or failed
 
-      const qusdNonce = nonces[0].result as bigint
-      const remitNonce = nonces[1].result as bigint
+      const qusdNonce = freshNonces[0].result as bigint
+      const remitNonce = freshNonces[1].result as bigint
 
       // 1. Generate 6-digit OTP
       const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString()
@@ -241,14 +266,26 @@ export default function SendPage() {
     } catch (err: unknown) {
       console.error(err)
       setSendState('idle')
-      const msg = err instanceof Error ? err.message : 'Transaction failed'
-      // Extract short message if available (viem specific)
-      const viemErr = err as { shortMessage?: string }
-      alert(viemErr.shortMessage || msg)
+      const viemErr = err as { shortMessage?: string; message?: string }
+      const raw = viemErr.shortMessage ?? viemErr.message ?? 'Unknown error'
+      // Map on-chain revert reasons to user-friendly copy
+      let friendly = raw
+      if (raw.includes('User rejected') || raw.includes('user rejected') || raw.includes('ACTION_REJECTED')) {
+        friendly = 'You cancelled the signature. Tap \'Send\' to try again.'
+      } else if (raw.includes('InsufficientBalance') || raw.includes('transfer amount exceeds balance')) {
+        friendly = 'Your QUSD balance is too low for this transfer.'
+      } else if (raw.includes('DailyLimitExceeded')) {
+        friendly = 'Daily KYC transfer limit reached. Try a smaller amount.'
+      } else if (raw.includes('network') || raw.includes('fetch') || raw.includes('timeout')) {
+        friendly = 'Network error. Check your connection and try again.'
+      } else if (raw.length > 120) {
+        friendly = raw.slice(0, 120) + '…'
+      }
+      setSendError(friendly)
     }
   }
 
-  const canSend = isConnected && !wrongChain && numericAmount >= 1 && phone.length >= 8 && sendState === 'idle'
+  const canSend = isConnected && !wrongChain && numericAmount >= 1 && phone.length >= 8 && sendState === 'idle' && !noncesLoading
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-ink)' }}>
@@ -620,6 +657,35 @@ export default function SendPage() {
               Minimum transfer is 1 QUSD
             </p>
           )}
+
+          {/* ── Inline error card ── */}
+          <AnimatePresence>
+            {sendError && (
+              <motion.div
+                role="alert"
+                initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                transition={{ duration: 0.2 }}
+                className="mt-3 rounded-xl p-4 flex items-start gap-3 border"
+                style={{ background: 'var(--color-coral-dim)', borderColor: 'rgba(255,107,92,0.3)' }}
+              >
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--color-coral)' }} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium" style={{ color: 'var(--color-coral)' }}>{sendError}</p>
+                  {sendError.includes('balance') && (
+                    <Link href="/faucet" className="text-xs font-semibold mt-1 inline-block underline"
+                      style={{ color: 'var(--color-coral)' }}>
+                      Get 100 test QUSD →
+                    </Link>
+                  )}
+                </div>
+                <button onClick={() => setSendError(null)} className="shrink-0 p-0.5" aria-label="Dismiss error">
+                  <X className="w-3.5 h-3.5" style={{ color: 'var(--color-coral)' }} />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </motion.div>
       </main>
     </div>

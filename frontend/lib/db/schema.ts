@@ -135,9 +135,30 @@ export const schedules = pgTable(
 
 export const eventCursor = pgTable('event_cursor', {
   id: integer('id').primaryKey().default(1), // always 1 — singleton
-  lastProcessedBlock: bigint('last_processed_block', { mode: 'bigint' }).notNull().default(BigInt(0)),
+  lastProcessedBlock: bigint('last_processed_block', { mode: 'number' }).notNull().default(0),
   updatedAt: integer('updated_at').notNull().default(sql`extract(epoch from now()) * 1000`),
 })
+
+// ── analytics_events ─────────────────────────────────────────────────────────
+// Lightweight funnel event log. Fire-and-forget from frontend.
+// Events: wallet_connected, transfer_sent, transfer_claimed,
+//         offramp_completed, faucet_dripped, claim_failed
+
+export const analyticsEvents = pgTable(
+  'analytics_events',
+  {
+    id: text('id').primaryKey().default(sql`gen_random_uuid()`),
+    eventName: text('event_name').notNull(),
+    walletAddress: text('wallet_address'),
+    transferId: text('transfer_id'),
+    metadata: text('metadata'), // JSON string — keep it flat
+    createdAt: integer('created_at').notNull().default(sql`extract(epoch from now()) * 1000`),
+  },
+  (t) => [
+    index('idx_analytics_event').on(t.eventName),
+    index('idx_analytics_created').on(t.createdAt),
+  ],
+)
 
 // ── Type exports ─────────────────────────────────────────────────────────────
 
@@ -148,3 +169,4 @@ export type PushSubscription = typeof pushSubscriptions.$inferSelect
 export type Schedule = typeof schedules.$inferSelect
 export type NewSchedule = typeof schedules.$inferInsert
 export type EventCursor = typeof eventCursor.$inferSelect
+export type AnalyticsEvent = typeof analyticsEvents.$inferSelect

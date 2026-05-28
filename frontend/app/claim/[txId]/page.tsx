@@ -20,6 +20,8 @@ export default function ClaimPage() {
   const [errorMsg, setErrorMsg] = useState('')
   const [retryAfterMs, setRetryAfterMs] = useState(0)
   const [countdown, setCountdown] = useState(0)
+  const [smsResendState, setSmsResendState] = useState<'idle' | 'sending' | 'sent'>('idle')
+  const [smsResendCooldown, setSmsResendCooldown] = useState(0)
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
 
   // Countdown timer for lockout
@@ -29,14 +31,24 @@ export default function ClaimPage() {
     const interval = setInterval(() => {
       const remaining = Math.max(0, lockUntil - Date.now())
       setCountdown(Math.ceil(remaining / 1000))
-      if (remaining === 0) {
-        setClaimState('idle')
-        clearInterval(interval)
-      }
+      if (remaining === 0) { setClaimState('idle'); clearInterval(interval) }
     }, 500)
     setCountdown(Math.ceil(retryAfterMs / 1000))
     return () => clearInterval(interval)
   }, [claimState, retryAfterMs])
+
+  // SMS resend cooldown
+  useEffect(() => {
+    if (smsResendState !== 'sent') return
+    const until = Date.now() + 60_000
+    const id = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((until - Date.now()) / 1000))
+      setSmsResendCooldown(remaining)
+      if (remaining === 0) { setSmsResendState('idle'); clearInterval(id) }
+    }, 500)
+    setSmsResendCooldown(60)
+    return () => clearInterval(id)
+  }, [smsResendState])
 
   // 1. Fetch Transfer Status
   const { data: transfer, isLoading } = useReadContract({
@@ -109,7 +121,18 @@ export default function ClaimPage() {
       }
 
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to claim transfer')
+        // Map relayer errors to user-friendly messages
+        let friendly = data.error || 'Failed to claim transfer'
+        if (friendly.includes('Phone number does not match')) {
+          friendly = "That phone number doesn't match this transfer. Use the same number the sender used."
+        } else if (friendly.includes('Invalid OTP')) {
+          friendly = 'Incorrect code. Double-check the 6 digits and try again.'
+        } else if (friendly.includes('expired')) {
+          friendly = 'This transfer has expired. The sender has been refunded.'
+        } else if (friendly.includes('not in a claimable state')) {
+          friendly = 'This transfer has already been claimed or cancelled.'
+        }
+        throw new Error(friendly)
       }
 
       setClaimState('success')
@@ -168,12 +191,30 @@ export default function ClaimPage() {
                 Done
               </Link>
             </motion.div>
-          ) : status === 2 ? (
-            <div className="p-6 rounded-2xl border" style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
-              <AlertCircle className="w-12 h-12 mx-auto mb-4" style={{ color: 'var(--color-coral)' }} />
-              <h1 className="text-xl font-bold mb-2">Transfer Cancelled</h1>
-              <p style={{ color: 'var(--color-text-secondary)' }}>This transfer has been cancelled by the sender or expired.</p>
-            </div>
+          ) : status === 2 || (transfer && Number(transfer.expiry) > 0 && Date.now() / 1000 > Number(transfer.expiry)) ? (
+            <motion.div
+              className="p-8 rounded-2xl border text-center"
+              style={{ background: 'var(--color-surface)', borderColor: 'rgba(255,107,92,0.25)' }}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+            >
+              <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-5"
+                style={{ background: 'var(--color-coral-dim)' }}>
+                <AlertCircle className="w-8 h-8" style={{ color: 'var(--color-coral)' }} />
+              </div>
+              <h1 className="text-2xl font-bold mb-2" style={{ color: 'var(--color-text-primary)' }}>
+                {status === 2 ? 'Transfer Cancelled' : 'Transfer Expired'}
+              </h1>
+              <p className="text-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>
+                {status === 2
+                  ? 'This transfer was cancelled by the sender.'
+                  : 'This transfer expired 48 hours after it was created. The sender has been automatically refunded.'}
+              </p>
+              <Link href="/" className="inline-flex h-12 px-6 items-center justify-center rounded-xl font-semibold w-full"
+                style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-text-primary)' }}>
+                Back to RemitChain
+              </Link>
+            </motion.div>
           ) : claimState === 'locked' ? (
             <motion.div
               className="p-8 rounded-2xl border text-center"
@@ -288,14 +329,37 @@ export default function ClaimPage() {
                 }}
               >
                 {claimState === 'submitting' ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                    Verifying...
-                  </>
-                ) : (
-                  'Claim Funds'
-                )}
+                  <><Loader2 className="w-5 h-5 animate-spin mr-2" />Verifying...</>
+                ) : 'Claim Funds'}
               </button>
+
+              {/* SMS resend */}
+              <div className="mt-8 pt-6 border-t text-left" style={{ borderColor: 'var(--color-border)' }}>
+                <p className="text-xs font-semibold mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Didn&apos;t receive the SMS?
+                </p>
+                <button
+                  disabled={smsResendState !== 'idle'}
+                  onClick={async () => {
+                    setSmsResendState('sending')
+                    try {
+                      await fetch('/api/notify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ transferId, recipientPhone: phone.trim() || undefined }),
+                      })
+                    } catch { /* non-fatal */ }
+                    setSmsResendState('sent')
+                  }}
+                  className="text-xs font-semibold flex items-center gap-1.5"
+                  style={{ color: smsResendState === 'idle' ? 'var(--color-mint)' : 'var(--color-text-tertiary)' }}
+                >
+                  {smsResendState === 'sending' && <Loader2 className="w-3 h-3 animate-spin" />}
+                  {smsResendState === 'sent'
+                    ? `Resent! Check your messages (retry in ${smsResendCooldown}s)`
+                    : 'Resend claim link via SMS'}
+                </button>
+              </div>
             </>
           )}
         </motion.div>

@@ -10,6 +10,7 @@ import { BiometricGate } from '@/components/BiometricGate'
 import { PushPermissionPrompt } from '@/components/PushPermissionPrompt'
 import { ServiceWorkerRegistration } from '@/components/ServiceWorker'
 import { defaultLocale } from '@/lib/i18n/config'
+import { Analytics } from '@vercel/analytics/react'
 import './globals.css'
 
 const inter = Inter({
@@ -97,6 +98,7 @@ export default async function RootLayout({
             </BiometricGate>
           </Web3Provider>
         </NextIntlClientProvider>
+        <Analytics />
       </body>
     </html>
   )

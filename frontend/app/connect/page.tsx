@@ -2,9 +2,10 @@
 
 import { useConnect, useAccount, useBlockNumber, useChainId } from 'wagmi'
 import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
-import { Wallet, AlertTriangle, ChevronRight } from 'lucide-react'
+import { Wallet, AlertTriangle, ChevronRight, Zap } from 'lucide-react'
+import Link from 'next/link'
 import { useChainGuard } from '@/hooks/useChainGuard'
 import { useQUSDBalance } from '@/hooks/useQUSDBalance'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -19,13 +20,46 @@ export default function ConnectPage() {
   const { formatted: balance, isLoading: balanceLoading } = useQUSDBalance(address)
   const { data: blockNumber } = useBlockNumber({ watch: true })
   const chainId = useChainId()
+  const [airdropState, setAirdropState] = useState<'idle' | 'pending' | 'done' | 'skipped'>('idle')
+  const airdropAttempted = useRef(false)
+
+  // Auto-fund: silently drip 100 QUSD when user connects with 0 balance
+  useEffect(() => {
+    if (
+      isConnected &&
+      !wrongChain &&
+      address &&
+      !balanceLoading &&
+      balance === '0.00' &&
+      !airdropAttempted.current
+    ) {
+      airdropAttempted.current = true
+      setAirdropState('pending')
+      fetch('/api/faucet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address }),
+      })
+        .then(res => {
+          if (res.ok || res.status === 429) {
+            // 429 means already dripped — still fine
+            setAirdropState('done')
+          } else {
+            setAirdropState('skipped')
+          }
+        })
+        .catch(() => setAirdropState('skipped'))
+    }
+  }, [isConnected, wrongChain, address, balanceLoading, balance])
 
   // Redirect to dashboard once connected + on right chain
   useEffect(() => {
     if (isConnected && !wrongChain) {
-      router.push('/dashboard')
+      // Small delay so auto-fund toast is visible briefly
+      const t = setTimeout(() => router.push('/dashboard'), airdropState === 'done' ? 1800 : 300)
+      return () => clearTimeout(t)
     }
-  }, [isConnected, wrongChain, router])
+  }, [isConnected, wrongChain, router, airdropState])
 
   const injectedConnector = connectors.find(c => c.id === 'injected')
 
@@ -260,10 +294,62 @@ export default function ConnectPage() {
                   </span>
                 )}
               </StatusRow>
+              {isConnected && !balanceLoading && balance === '0.00' && (
+                <Link href="/faucet"
+                  className="mt-3 flex items-center justify-center gap-2 h-10 rounded-xl text-sm font-semibold border w-full"
+                  style={{ background: 'var(--color-mint-dim)', borderColor: 'var(--color-mint-glow)', color: 'var(--color-mint)' }}>
+                  Get 100 free test QUSD →
+                </Link>
+              )}
             </div>
           </motion.div>
         </div>
       </main>
+
+      {/* Auto-fund toast */}
+      <AnimatePresence>
+        {(airdropState === 'pending' || airdropState === 'done') && (
+          <motion.div
+            key="airdrop-toast"
+            initial={{ opacity: 0, y: 24, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 16, scale: 0.95 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 28 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl border shadow-xl"
+            style={{
+              background: 'var(--color-surface)',
+              borderColor: airdropState === 'done' ? 'var(--color-mint-glow)' : 'var(--color-border)',
+              boxShadow: airdropState === 'done' ? '0 0 30px rgba(61,220,151,0.2)' : 'none',
+            }}
+            role="status"
+            aria-live="polite"
+          >
+            <div
+              className="w-7 h-7 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: 'var(--color-mint-dim)' }}
+            >
+              {airdropState === 'pending' ? (
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+                >
+                  <Zap className="w-3.5 h-3.5" style={{ color: 'var(--color-mint)' }} />
+                </motion.div>
+              ) : (
+                <Zap className="w-3.5 h-3.5" style={{ color: 'var(--color-mint)' }} />
+              )}
+            </div>
+            <div>
+              <p className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                {airdropState === 'pending' ? 'Funding your wallet…' : '100 QUSD added ✨'}
+              </p>
+              <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                {airdropState === 'pending' ? 'Getting you test QUSD to start' : 'Redirecting to dashboard'}
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

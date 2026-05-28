@@ -1,14 +1,22 @@
 # CLAUDE.md — RemitChain
 
-> Instant, near-zero-fee cross-border remittances for migrant workers.
-> QIE blockchain · any corridor · any currency · 0.1% fee.
+> PayPal / Venmo / UPI — but on QIE rails with near-zero fees.
+> Pay anyone, anywhere, by phone number. No crypto knowledge required.
 > Stack: **Foundry** (contracts) + **Next.js** (frontend).
 
 ---
 
 ## What it is
 
-It's a PWA (Progressive Web App) — and that's a deliberate, strategic choice, not a compromise.Phone-number-only remittance app. Sender pays local currency → QUSD locked in on-chain escrow → recipient claims with a 6-digit OTP → cash out via local rail (UPI, GCash, bKash, SPEI…). Neither side touches a wallet or seed phrase.
+RemitChain is a **general-purpose payments app** built on QIE blockchain. It's a PWA (Progressive Web App) — and that's a deliberate, strategic choice, not a compromise.
+
+Sender enters a phone number → QUSD locked in on-chain escrow → recipient claims with a 6-digit OTP via SMS → cash out via local rail (UPI, GCash, bKash, SPEI…). Neither side needs a wallet or crypto knowledge.
+
+The same core engine powers:
+- **Cross-border remittances** — the hero use case; workers saving 4.4% vs Western Union
+- **Daily P2P payments** — split a bill, pay back a friend, send rent
+- **Merchant payments** — pay a shop, a freelancer, a service
+- **Domestic transfers** — send to family anywhere, same country or abroad
 
 **Hackathon:** QIE Blockchain 2026 · DeFi & Payments · Build May 16–Jun 14 · Submit Jun 15–19 · Prize $20.5K + $1M grant track · Bonus for 100+ active users.
 
@@ -16,9 +24,10 @@ It's a PWA (Progressive Web App) — and that's a deliberate, strategic choice, 
 
 ## Why it wins
 
-- $860B market, 281M migrant workers, ~$40B/yr lost to fees.
+- $860B remittance market + $trillions in daily P2P payments — one product addresses both.
 - Beats UN SDG 10.c target (3% by 2030) — already at 0.1%.
 - Uses all 5 QIE components. Zero-crypto UX. Real on-chain users, not a demo.
+- **Sharp edges:** phone-number routing (not wallet address), OTP claim (no wallet needed for recipient), 0.1% fee (vs 2-7% everywhere else), cross-border by default.
 
 ---
 
@@ -188,12 +197,15 @@ NEXT_PUBLIC_RPC_URL=https://rpc1testnet.qie.digital/
 
 ## 100+ users
 
+With general payments positioning, **anyone** is a valid user — not just migrant workers.
+
 | Channel | Users | Lever |
 |---|---|---|
-| Employer batch send | 30–50 | one factory HR = one CSV upload |
-| WhatsApp groups | 30 | 30s live-transfer video |
-| Live demo event | 25 | send real QUSD on stage |
-| NGO partner | 20 | one coordinator's caseload |
+| College peers / friends | 30–40 | split lunch, chai, events — live demo in class |
+| WhatsApp groups | 30 | 30s live-transfer video — "pay me back by phone number" |
+| Employer batch send | 20–30 | one factory HR = one CSV upload |
+| Live demo event | 25 | send real QUSD on stage, audience claims it |
+| NGO / community partner | 20 | one coordinator's caseload |
 | Referrals | 15 | refer 3 → free transfer |
 
-**Active user = wallet connected + QIE Pass KYC + ≥1 on-chain tx.**
+**Active user = wallet connected + ≥1 on-chain tx.** (Broad payments = lower acquisition friction.)

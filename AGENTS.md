@@ -2,7 +2,7 @@
 
 Operating manual for AI coding agents working in this repo. Read this fully before editing. If a rule here conflicts with a request, follow this file and flag the conflict.
 
-Project: It's a PWA (Progressive Web App) — and that's a deliberate, strategic choice, not a compromise.phone-number-only cross-border remittance app on QIE blockchain. QUSD escrow + OTP claim. Stack: **Foundry** (contracts) + **Next.js 14** (web/api). Full architecture in `CLAUDE.md`.
+Project: It's a PWA (Progressive Web App) — and that's a deliberate, strategic choice, not a compromise. Phone-number-only **general payments & cross-border remittance** app on QIE blockchain. Pay anyone by phone number, for near-zero fees (0.1%), with zero crypto knowledge required. QUSD escrow + OTP claim. Cross-border remittances are the hero use case, but the engine powers daily P2P, merchant, and domestic payments too. Stack: **Foundry** (contracts) + **Next.js 14** (web/api). Full architecture in `CLAUDE.md`.
 
 ---
 

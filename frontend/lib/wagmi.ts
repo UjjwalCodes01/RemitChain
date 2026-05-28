@@ -3,18 +3,33 @@ import { injected, walletConnect } from 'wagmi/connectors'
 import { qieTestnet } from './chains'
 import { env } from './env'
 
-const connectors = [
-  injected(),
-  walletConnect({ 
-    projectId: env.NEXT_PUBLIC_WC_PROJECT_ID || 'your_project_id_here',
-    metadata: {
-      name: 'RemitChain',
-      description: 'Send money home. Not 5% of it.',
-      url: 'https://remitchain.app',
-      icons: ['https://remitchain.app/icons/icon-192.png'],
+// Safely build connectors — WalletConnect can throw if projectId is missing or
+// the internal session cache is empty on first load (Object.values on null).
+function buildConnectors() {
+  const list = [injected()]
+  const wcProjectId = env.NEXT_PUBLIC_WC_PROJECT_ID
+  if (wcProjectId && wcProjectId !== 'your_project_id_here') {
+    try {
+      list.push(
+        walletConnect({
+          projectId: wcProjectId,
+          metadata: {
+            name: 'RemitChain',
+            description: 'Pay anyone, anywhere, by phone number. Near-zero fees.',
+            url: typeof window !== 'undefined' ? window.location.origin : 'https://remitchain.app',
+            icons: ['https://remitchain.app/icons/icon-192.png'],
+          },
+          showQrModal: true,
+        }),
+      )
+    } catch (e) {
+      console.warn('[wagmi] WalletConnect init failed — injected only:', e)
     }
-  }),
-]
+  }
+  return list
+}
+
+const connectors = buildConnectors()
 
 export const wagmiConfig = createConfig({
   chains: [qieTestnet],

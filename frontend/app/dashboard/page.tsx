@@ -4,10 +4,11 @@ import { useAccount } from 'wagmi'
 import { useRouter } from 'next/navigation'
 import { useEffect } from 'react'
 import { motion } from 'motion/react'
-import { ArrowRight, Send } from 'lucide-react'
+import { ArrowRight, Send, Clock, CheckCircle2, AlertCircle, BarChart2 } from 'lucide-react'
 import Link from 'next/link'
 import { useQUSDBalance } from '@/hooks/useQUSDBalance'
 import { useKYCStatus } from '@/hooks/useKYCStatus'
+import { useTransferHistory, statusLabel, formatQusd } from '@/hooks/useTransferHistory'
 import { KYCBadge } from '@/components/ui/KYCBadge'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { NavBar } from '@/components/NavBar'
@@ -17,6 +18,7 @@ export default function DashboardPage() {
   const { address, isConnected } = useAccount()
   const { formatted: balance, raw: balanceRaw, isLoading: balanceLoading } = useQUSDBalance(address)
   const { tier, isLoading: kycLoading, tierLabel, dailyLimit } = useKYCStatus(address)
+  const { data: txHistory, isLoading: historyLoading } = useTransferHistory(address)
 
   // Guard: must be connected
   useEffect(() => {
@@ -84,6 +86,31 @@ export default function DashboardPage() {
             </>
           )}
         </motion.div>
+
+        {/* ── Zero-balance faucet nudge ── */}
+        {!balanceLoading && balanceRaw === 0n && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, delay: 0.03 }}
+            className="mb-4 rounded-xl p-4 border flex items-center justify-between gap-3"
+            style={{ background: 'var(--color-mint-dim)', borderColor: 'var(--color-mint-glow)' }}
+          >
+            <div>
+              <p className="text-sm font-semibold" style={{ color: 'var(--color-mint)' }}>
+                No QUSD yet
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>
+                Get 100 free testnet QUSD to send your first transfer.
+              </p>
+            </div>
+            <Link href="/faucet"
+              className="shrink-0 px-4 h-9 rounded-xl font-semibold text-sm flex items-center"
+              style={{ background: 'var(--color-mint)', color: 'var(--color-ink)' }}>
+              Get QUSD →
+            </Link>
+          </motion.div>
+        )}
 
         {/* ── KYC Badge ── */}
         <motion.div
@@ -169,24 +196,67 @@ export default function DashboardPage() {
           </Link>
         </motion.div>
 
-        {/* ── Recent transfers ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1], delay: 0.15 }}
-        >
-          <div className="flex items-center justify-between mb-4">
-            <h2
-              className="text-sm font-semibold uppercase tracking-widest"
-              style={{ color: 'var(--color-text-tertiary)' }}
-            >
-              Recent transfers
-            </h2>
-          </div>
+          {/* ── Recent transfers ── */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1], delay: 0.15 }}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold uppercase tracking-widest"
+                style={{ color: 'var(--color-text-tertiary)' }}>Recent transfers</h2>
+              <Link href="/stats" className="flex items-center gap-1 text-xs font-semibold"
+                style={{ color: 'var(--color-text-tertiary)' }}>
+                <BarChart2 className="w-3 h-3" /> Live stats
+              </Link>
+            </div>
 
-          {/* Beautiful empty state */}
-          <EmptyTransfersState />
-        </motion.div>
+            {historyLoading ? (
+              <div className="space-y-3">
+                {[0,1,2].map(i => <Skeleton key={i} height={64} />)}
+              </div>
+            ) : !txHistory || txHistory.length === 0 ? (
+              <EmptyTransfersState />
+            ) : (
+              <div className="rounded-2xl border overflow-hidden" style={{ borderColor: 'var(--color-border)' }}>
+                {txHistory.slice(0, 8).map((tx, i) => (
+                  <Link key={tx.id} href={`/transfer/${tx.id}`}
+                    className="flex items-center justify-between px-5 py-4 border-b last:border-b-0 transition-colors hover:bg-white/5"
+                    style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)', display: 'flex' }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+                        style={{
+                          background: tx.status === 1 ? 'var(--color-mint-dim)' : tx.status === 2 ? 'var(--color-coral-dim)' : 'rgba(245,166,35,0.12)',
+                        }}>
+                        {tx.status === 1
+                          ? <CheckCircle2 className="w-4 h-4" style={{ color: 'var(--color-mint)' }} />
+                          : tx.status === 2
+                          ? <AlertCircle className="w-4 h-4" style={{ color: 'var(--color-coral)' }} />
+                          : <Clock className="w-4 h-4" style={{ color: 'var(--color-warning)' }} />}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                          {tx.recipientNickname ?? tx.recipientPhoneHash?.slice(0, 10) ?? 'Recipient'}
+                        </p>
+                        <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                          {statusLabel(tx.status)} · {tx.corridor ?? 'Transfer'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-bold font-mono" style={{ color: 'var(--color-text-primary)' }}>
+                        ${tx.amount ? formatQusd(tx.amount) : '—'}
+                      </p>
+                      <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                        {tx.createdAt ? new Date(tx.createdAt).toLocaleDateString() : ''}
+                      </p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </motion.div>
       </main>
     </div>
   )
