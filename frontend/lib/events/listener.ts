@@ -53,7 +53,7 @@ const CONFIRMATIONS = 3n        // Process events only after 3 confirmations
 // ── Event ABI fragments ───────────────────────────────────────────────────────
 
 const TransferInitiatedAbi = parseAbiItem(
-  'event TransferInitiated(bytes32 indexed transferId, address indexed sender, bytes32 recipientPhoneHash, uint256 amount, uint8 corridor, uint256 expiry)',
+  'event TransferInitiated(bytes32 indexed transferId, address indexed sender, bytes32 indexed recipientPhoneHash, uint256 amount, uint64 expiry, uint8 corridor)',
 )
 
 const TransferClaimedAbi = parseAbiItem(
@@ -92,12 +92,13 @@ async function getCursor(): Promise<number> {
 async function setCursor(block: bigint): Promise<void> {
   if (!db) return
   const blockNum = Number(block)
+  const nowSec = Math.floor(Date.now() / 1000) // unix seconds — fits in integer column
   await db
     .insert(eventCursor)
-    .values({ lastProcessedBlock: blockNum, updatedAt: Date.now() })
+    .values({ lastProcessedBlock: blockNum, updatedAt: nowSec })
     .onConflictDoUpdate({
       target: eventCursor.id,
-      set: { lastProcessedBlock: blockNum, updatedAt: Date.now() },
+      set: { lastProcessedBlock: blockNum, updatedAt: nowSec },
     })
 }
 
@@ -111,7 +112,9 @@ async function processTransferInitiated(log: Log<bigint, number, false, typeof T
   const transferId = args.transferId as string
   const amount = (args.amount ?? 0n).toString()
   const corridorIndex = Number(args.corridor ?? 0)
-  const expiryMs = Number(args.expiry ?? 0) * 1000
+  // expiry is uint64 unix seconds on-chain
+  const expiryUnixSec = Number(args.expiry ?? 0)
+  const nowSec = Math.floor(Date.now() / 1000)
 
   // Idempotent upsert — if row already exists (from POST /api/transfers/metadata), merge
   await db
@@ -125,9 +128,9 @@ async function processTransferInitiated(log: Log<bigint, number, false, typeof T
       corridor: String(corridorIndex),
       status: 0,
       smsStatus: 'PENDING',
-      expiry: expiryMs,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      expiry: expiryUnixSec,
+      createdAt: nowSec,
+      updatedAt: nowSec,
     })
     .onConflictDoUpdate({
       target: transfers.id,
@@ -135,11 +138,10 @@ async function processTransferInitiated(log: Log<bigint, number, false, typeof T
         txHash: log.transactionHash ?? undefined,
         senderAddress: args.sender.toLowerCase(),
         status: sql`LEAST(${transfers.status}, 0)`, // Don't downgrade status
-        updatedAt: Date.now(),
+        updatedAt: nowSec,
       },
     })
 
-  // Trigger SMS if not yet sent
   await maybeSendSms(transferId)
 }
 
@@ -152,7 +154,7 @@ async function processTransferClaimed(log: Log<bigint, number, false, typeof Tra
 
   await db
     .update(transfers)
-    .set({ status: 1, claimedAt: Date.now(), updatedAt: Date.now() })
+    .set({ status: 1, claimedAt: Math.floor(Date.now() / 1000), updatedAt: Math.floor(Date.now() / 1000) })
     .where(eq(transfers.id, transferId))
 
   console.log(JSON.stringify({ level: 'info', step: 'event.claimed', transferId: transferId.slice(0, 10) + '…', ts: new Date().toISOString() }))
@@ -165,7 +167,7 @@ async function processTransferCancelled(log: Log<bigint, number, false, typeof T
 
   await db
     .update(transfers)
-    .set({ status: 2, updatedAt: Date.now() })
+    .set({ status: 2, updatedAt: Math.floor(Date.now() / 1000) })
     .where(eq(transfers.id, args.transferId as string))
 }
 
@@ -194,7 +196,7 @@ async function maybeSendSms(transferId: string): Promise<void> {
   // We can't resend without the recipient's phone — mark as FAILED for visibility.
   await db
     .update(transfers)
-    .set({ smsStatus: 'FAILED', updatedAt: Date.now() })
+    .set({ smsStatus: 'FAILED', updatedAt: Math.floor(Date.now() / 1000) })
     .where(eq(transfers.id, transferId))
 
   console.log(JSON.stringify({

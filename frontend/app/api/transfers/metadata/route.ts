@@ -21,7 +21,7 @@ const metadataSchema = z.object({
   txHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/).optional(),
   senderAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   recipientPhoneHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/).optional(),
-  recipientNickname: z.string().max(50).optional(),
+  recipientNickname: z.string().max(50).nullable().optional(),
   amount: z.string().optional(),   // QUSD base units as string
   corridor: z.string().optional(),
 })
@@ -47,6 +47,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, warning: 'DB not configured' })
   }
 
+  const nowSec = Math.floor(Date.now() / 1000)
+
   await db
     .insert(transfers)
     .values({
@@ -59,8 +61,8 @@ export async function POST(req: NextRequest) {
       corridor: data.corridor ?? '',
       status: 0,
       smsStatus: 'PENDING',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+      createdAt: nowSec,
+      updatedAt: nowSec,
     })
     .onConflictDoUpdate({
       target: transfers.id,
@@ -68,7 +70,7 @@ export async function POST(req: NextRequest) {
         txHash: data.txHash ?? undefined,
         recipientNickname: data.recipientNickname ?? undefined,
         senderAddress: data.senderAddress.toLowerCase(),
-        updatedAt: Date.now(),
+        updatedAt: nowSec,
       },
     })
 

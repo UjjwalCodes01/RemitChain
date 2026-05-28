@@ -2,17 +2,17 @@
 
 import { motion, useSpring, useMotionValueEvent, AnimatePresence } from 'motion/react'
 import { useState, useEffect, useCallback } from 'react'
-import { useAccount, useChainId, useReadContracts, useSignTypedData, useWriteContract } from 'wagmi'
+import { useAccount, useChainId, useReadContracts, useWriteContract } from 'wagmi'
 import { ArrowRight, ChevronDown, CheckCircle2, Loader2, Phone, UserCircle2, AlertCircle, X } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { encodeAbiParameters, encodePacked, keccak256, parseUnits, toHex, hexToSignature } from 'viem'
+import { encodeAbiParameters, encodePacked, keccak256, parseUnits, toHex } from 'viem'
 import { NavBar } from '@/components/NavBar'
 import { useChainGuard } from '@/hooks/useChainGuard'
 import { env } from '@/lib/env'
 import { REMITCHAIN_ADDRESS, ESCROW_VAULT_ADDRESS, QUSD_ADDRESS, QUSD_DECIMALS, RemitChainAbi, ERC20Abi } from '@/lib/contracts'
 import { VoiceInput } from '@/components/VoiceInput'
-import { verifyBiometric } from '@/lib/biometric/webauthn'
+import { verifyBiometric, isBiometricRegistered } from '@/lib/biometric/webauthn'
 import { getContact } from '@/lib/contacts/db'
 import type { Contact } from '@/lib/contacts/types'
 
@@ -85,19 +85,13 @@ export default function SendPage() {
 
   // ─── Web3 Hooks ────────────────────────────────────────────────────────────
 
-  // Read nonces — always refetch on send to avoid stale data
+  // Read only senderNonces — QUSD on this deployment doesn't have ERC20Permit
   const {
-    data: nonces,
-    refetch: refetchNonces,
+    data: senderNonceData,
+    refetch: refetchSenderNonce,
     isLoading: noncesLoading,
   } = useReadContracts({
     contracts: [
-      {
-        address: QUSD_ADDRESS,
-        abi: ERC20Abi,
-        functionName: 'nonces',
-        args: address ? [address] : undefined,
-      },
       {
         address: REMITCHAIN_ADDRESS,
         abi: RemitChainAbi,
@@ -107,13 +101,11 @@ export default function SendPage() {
     ],
     query: {
       enabled: Boolean(address),
-      // Retry silently on failure — don't surface to user until send is clicked
       retry: 3,
       retryDelay: 1000,
     },
   })
 
-  const { signTypedDataAsync } = useSignTypedData()
   const { writeContractAsync } = useWriteContract()
 
   // ─── Send Flow ─────────────────────────────────────────────────────────────
@@ -123,34 +115,34 @@ export default function SendPage() {
     setSendError(null)
     setSendState('signing')
 
-    // Always fetch fresh nonces right before signing to avoid stale data
-    let freshNonces: typeof nonces
+    // Always fetch fresh senderNonce right before signing
+    let freshSenderNonce: bigint
     try {
-      const result = await refetchNonces()
-      freshNonces = result.data
+      const result = await refetchSenderNonce()
+      const d = result.data
+      if (!d || d.length < 1 || d[0].status !== 'success') throw new Error('nonce unresolved')
+      freshSenderNonce = d[0].result as bigint
     } catch {
-      freshNonces = nonces
-    }
-
-    if (
-      !freshNonces ||
-      freshNonces.length < 2 ||
-      freshNonces[0].status !== 'success' ||
-      freshNonces[1].status !== 'success'
-    ) {
-      setSendState('idle')
-      setSendError(
-        'Could not read on-chain data. Make sure your wallet is on QIE Testnet (chain 1983) and try again.',
-      )
-      return
+      // Fallback to cached value
+      if (senderNonceData?.[0]?.status === 'success') {
+        freshSenderNonce = senderNonceData[0].result as bigint
+      } else {
+        setSendState('idle')
+        setSendError('Could not read on-chain data. Check your wallet is on QIE Testnet (chain 1983).')
+        return
+      }
     }
 
     try {
-      const bioOk = await verifyBiometric()
-      if (!bioOk) { setSendState('idle'); return } // Biometric cancelled or failed
+      // Biometric is optional — only prompt if a credential is already registered.
+      // The real security gate is the wallet signature below.
+      const credRegistered = await isBiometricRegistered().catch(() => false)
+      if (credRegistered) {
+        const bioOk = await verifyBiometric()
+        if (!bioOk) { setSendState('idle'); return }
+      }
 
-      const qusdNonce = freshNonces[0].result as bigint
-      const remitNonce = freshNonces[1].result as bigint
+      const remitNonce = freshSenderNonce
 
       // 1. Generate 6-digit OTP
       const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString()
@@ -171,62 +163,34 @@ export default function SendPage() {
       )
       const otpCommitHash = keccak256(encodedCommit)
 
-      // 4. Compute Phone Hash — must use encodePacked to match abi.encodePacked(SALT, phone) in Solidity
+      // 4. Compute Phone Hash
       const SALT = toHex(BigInt('0xDEADBEEF'), { size: 32 })
       const phoneHash = keccak256(encodePacked(['bytes32', 'string'], [SALT, phone]))
 
-      // 5. Setup Permit
       const value = parseUnits(numericAmount.toString(), QUSD_DECIMALS)
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600) // 1 hour
+      const corridorIndex = CORRIDORS.findIndex(c => c.id === corridorId) + 1
 
-      // 6. Sign EIP-2612 Permit
-      const signature = await signTypedDataAsync({
-        domain: {
-          name: 'Mock QUSD',
-          version: '1',
-          chainId: chainId,
-          verifyingContract: QUSD_ADDRESS,
-        },
-        types: {
-          Permit: [
-            { name: 'owner', type: 'address' },
-            { name: 'spender', type: 'address' },
-            { name: 'value', type: 'uint256' },
-            { name: 'nonce', type: 'uint256' },
-            { name: 'deadline', type: 'uint256' },
-          ],
-        },
-        primaryType: 'Permit',
-        message: {
-          owner: address,
-          spender: ESCROW_VAULT_ADDRESS,
-          value,
-          nonce: qusdNonce,
-          deadline,
-        },
+      // 5. Step 1 — approve QUSD spend to EscrowVault
+      setSendState('signing') // reuse 'signing' label for approve step
+      await writeContractAsync({
+        address: QUSD_ADDRESS,
+        abi: ERC20Abi,
+        functionName: 'approve',
+        args: [ESCROW_VAULT_ADDRESS, value],
       })
-
-      const { v, r, s } = hexToSignature(signature)
 
       setSendState('broadcasting')
 
-      // 7. Broadcast sendRemittanceWithPermit
-      // mapping corridor to uint8 (1-indexed based on array position for demo)
-      const corridorIndex = CORRIDORS.findIndex(c => c.id === corridorId) + 1
-      
+      // 6. Step 2 — sendRemittance
       const tx = await writeContractAsync({
         address: REMITCHAIN_ADDRESS,
         abi: RemitChainAbi,
-        functionName: 'sendRemittanceWithPermit',
+        functionName: 'sendRemittance',
         args: [
           phoneHash,
           value,
           otpCommitHash,
           corridorIndex,
-          deadline,
-          Number(v),
-          r,
-          s,
         ],
       })
 
@@ -234,8 +198,19 @@ export default function SendPage() {
       setOtpCode(generatedOtp)
       if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(50)
 
-      // 1. Persist off-chain metadata (nickname, txHash) to DB — fire-and-forget
-      //    This runs immediately so the tracker can show the recipient's name
+      // Normalize phone to E.164 for API validation
+      // Map corridor to country dial code for prefix
+      const CORRIDOR_DIAL_CODE: Record<string, string> = {
+        'ae-in': '+91', 'us-mx': '+52', 'gb-ng': '+234', 'sa-pk': '+92', 'sg-bd': '+880',
+      }
+      const dialCode = CORRIDOR_DIAL_CODE[corridorId] ?? '+91'
+      const digits = phone.replace(/\D/g, '')
+      // If already has full international digits (>10), just prefix +; otherwise use corridor code
+      const e164Phone = phone.startsWith('+') ? phone
+        : digits.length > 10 ? `+${digits}`
+        : `${dialCode}${digits.replace(/^0+/, '')}`
+
+      // 1. Persist off-chain metadata to DB — fire-and-forget
       fetch('/api/transfers/metadata', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -255,11 +230,13 @@ export default function SendPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transferId,
-          recipientPhone: phone,
+          recipientPhone: e164Phone,
           amount: numericAmount,
           corridor: corridorId,
         }),
-      }).catch(err => console.warn('[notify] SMS dispatch failed (non-fatal):', err))
+      }).then(async r => {
+        if (!r.ok) console.warn('[notify] SMS 400:', await r.json().catch(() => r.text()))
+      }).catch(err => console.warn('[notify] Failed (non-fatal):', err))
 
       router.push(`/transfer/${transferId}`)
 
@@ -632,12 +609,12 @@ export default function SendPage() {
               {sendState === 'signing' ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" aria-hidden />
-                  Signing Permit...
+                  Approving QUSD...
                 </>
               ) : sendState === 'broadcasting' ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" aria-hidden />
-                  Broadcasting...
+                  Sending...
                 </>
               ) : numericAmount < 1 ? (
                 'Minimum 1 QUSD'

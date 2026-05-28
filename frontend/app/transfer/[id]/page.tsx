@@ -130,12 +130,29 @@ export default function TransferTrackerPage() {
     return () => unwatch()
   }, [publicClient, transferId, currentStage, refetch])
 
+  const [copied, setCopied] = useState(false)
+
   const handleShare = async () => {
     const claimUrl = `${window.location.origin}/claim/${txId}`
-    try {
-      await navigator.share({ title: 'Your RemitChain transfer', text: 'Claim your money here:', url: claimUrl })
-    } catch {
-      await navigator.clipboard.writeText(claimUrl)
+    // Try clipboard first (works on desktop + HTTP localhost)
+    // navigator.share() only works on mobile/HTTPS
+    let shared = false
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(claimUrl)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2500)
+        shared = true
+      } catch { /* fallthrough */ }
+    }
+    if (!shared && navigator.share) {
+      try {
+        await navigator.share({ title: 'Your RemitChain transfer', text: 'Claim your money:', url: claimUrl })
+      } catch { /* user cancelled or share unavailable */ }
+    }
+    if (!shared && !navigator.share) {
+      // Final fallback: prompt
+      window.prompt('Copy this claim link:', claimUrl)
     }
   }
 
@@ -154,9 +171,12 @@ export default function TransferTrackerPage() {
           <h1 className="text-base font-bold" style={{ color: 'var(--color-text-primary)' }}>Transfer</h1>
           <p className="text-xs font-mono truncate" style={{ color: 'var(--color-text-tertiary)' }}>{txId.slice(0, 18)}…</p>
         </div>
-        <button onClick={handleShare} className="w-10 h-10 rounded-xl flex items-center justify-center"
-          style={{ background: 'var(--color-surface)' }} aria-label="Share transfer link">
-          <Share2 className="w-4 h-4" style={{ color: 'var(--color-text-secondary)' }} />
+        <button onClick={handleShare} className="w-10 h-10 rounded-xl flex items-center justify-center transition-colors"
+          style={{ background: copied ? 'var(--color-mint-dim)' : 'var(--color-surface)' }} aria-label="Share transfer link">
+          {copied
+            ? <CheckCircle2 className="w-4 h-4" style={{ color: 'var(--color-mint)' }} />
+            : <Share2 className="w-4 h-4" style={{ color: 'var(--color-text-secondary)' }} />
+          }
         </button>
       </div>
 
