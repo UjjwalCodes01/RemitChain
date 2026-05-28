@@ -1,12 +1,12 @@
 import webpush from 'web-push'
 import { env } from '@/lib/env'
 
-if (env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY && env.VAPID_SUBJECT) {
-  webpush.setVapidDetails(
-    env.VAPID_SUBJECT,
-    env.VAPID_PUBLIC_KEY,
-    env.VAPID_PRIVATE_KEY
-  )
+const vapidPublicKey = env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+const vapidPrivateKey = env.VAPID_PRIVATE_KEY
+const vapidSubject = env.VAPID_SUBJECT
+
+if (vapidPublicKey && vapidPrivateKey && vapidSubject) {
+  webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey)
 }
 
 export interface PushPayload {
@@ -19,7 +19,7 @@ export async function sendPushNotification(
   subscription: webpush.PushSubscription,
   payload: PushPayload
 ): Promise<void> {
-  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) {
+  if (!vapidPublicKey || !vapidPrivateKey) {
     console.warn('VAPID keys not configured — push skipped')
     return
   }

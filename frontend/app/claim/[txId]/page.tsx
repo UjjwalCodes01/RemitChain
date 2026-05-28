@@ -3,7 +3,7 @@
 import { useParams } from 'next/navigation'
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
-import { CheckCircle2, Loader2, AlertCircle } from 'lucide-react'
+import { CheckCircle2, Loader2, AlertCircle, Phone } from 'lucide-react'
 import { useReadContract } from 'wagmi'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
 import { NavBar } from '@/components/NavBar'
@@ -14,10 +14,29 @@ export default function ClaimPage() {
   const txId = typeof params.txId === 'string' ? params.txId : Array.isArray(params.txId) ? params.txId[0] : ''
   const transferId = txId.startsWith('0x') ? (txId as `0x${string}`) : `0x${txId}` as `0x${string}`
 
+  const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState(['', '', '', '', '', ''])
-  const [claimState, setClaimState] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle')
+  const [claimState, setClaimState] = useState<'idle' | 'submitting' | 'success' | 'error' | 'locked'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
+  const [retryAfterMs, setRetryAfterMs] = useState(0)
+  const [countdown, setCountdown] = useState(0)
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
+
+  // Countdown timer for lockout
+  useEffect(() => {
+    if (claimState !== 'locked' || retryAfterMs <= 0) return
+    const lockUntil = Date.now() + retryAfterMs
+    const interval = setInterval(() => {
+      const remaining = Math.max(0, lockUntil - Date.now())
+      setCountdown(Math.ceil(remaining / 1000))
+      if (remaining === 0) {
+        setClaimState('idle')
+        clearInterval(interval)
+      }
+    }, 500)
+    setCountdown(Math.ceil(retryAfterMs / 1000))
+    return () => clearInterval(interval)
+  }, [claimState, retryAfterMs])
 
   // 1. Fetch Transfer Status
   const { data: transfer, isLoading } = useReadContract({
@@ -27,11 +46,10 @@ export default function ClaimPage() {
     args: [transferId],
     query: {
       enabled: Boolean(transferId && transferId.length === 66),
-      refetchInterval: claimState === 'success' ? false : 3000, // Poll until claimed
+      refetchInterval: claimState === 'success' ? false : 3000,
     }
   })
 
-  // Transfer.status enum: 0 = PENDING, 1 = CLAIMED, 2 = CANCELLED
   const status = transfer?.status
 
   // Handle OTP Input
@@ -43,8 +61,7 @@ export default function ClaimPage() {
 
   const handleChange = (index: number, value: string) => {
     if (!/^\d*$/.test(value)) return
-    
-    // Handle paste of full 6 digits
+
     if (value.length === 6) {
       const newOtp = value.split('')
       setOtp(newOtp)
@@ -62,23 +79,34 @@ export default function ClaimPage() {
   }
 
   const isOtpComplete = otp.every(d => d !== '')
+  // E.164-ish validation: must start with + and have at least 7 digits
+  const isPhoneValid = /^\+[1-9]\d{6,14}$/.test(phone.trim())
+  const canSubmit = isOtpComplete && isPhoneValid && claimState === 'idle'
 
   const submitClaim = async () => {
-    if (!isOtpComplete) return
+    if (!canSubmit) return
     setClaimState('submitting')
     setErrorMsg('')
 
     try {
-      const res = await fetch('/api/relayer', {
+      const res = await fetch('/api/relayer/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transferId,
-          otp: otp.join('')
+          otp: otp.join(''),
+          recipientPhone: phone.trim(),
         })
       })
 
       const data = await res.json()
+
+      if (res.status === 429) {
+        setRetryAfterMs(data.retryAfterMs ?? 600_000)
+        setClaimState('locked')
+        if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(200)
+        return
+      }
 
       if (!res.ok) {
         throw new Error(data.error || 'Failed to claim transfer')
@@ -99,9 +127,9 @@ export default function ClaimPage() {
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-ink)' }}>
       <NavBar hideConnect />
-      
+
       <main className="flex-1 flex flex-col items-center justify-center px-4 pt-24 pb-16">
-        <motion.div 
+        <motion.div
           className="w-full max-w-sm mx-auto text-center"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -118,8 +146,8 @@ export default function ClaimPage() {
               <p style={{ color: 'var(--color-text-secondary)' }}>The link may be broken or the transfer ID is invalid.</p>
             </div>
           ) : status === 1 || claimState === 'success' ? (
-            <motion.div 
-              className="p-8 rounded-2xl border" 
+            <motion.div
+              className="p-8 rounded-2xl border"
               style={{ background: 'var(--color-surface)', borderColor: 'var(--color-mint-glow)' }}
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -130,7 +158,7 @@ export default function ClaimPage() {
               </div>
               <h1 className="text-2xl font-bold mb-2">Claim Successful</h1>
               <p className="text-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>
-                The funds have been released and are on their way to your local account via the selected off-ramp rail.
+                The funds have been released and are on their way to your local account.
               </p>
               <Link
                 href="/"
@@ -146,38 +174,91 @@ export default function ClaimPage() {
               <h1 className="text-xl font-bold mb-2">Transfer Cancelled</h1>
               <p style={{ color: 'var(--color-text-secondary)' }}>This transfer has been cancelled by the sender or expired.</p>
             </div>
+          ) : claimState === 'locked' ? (
+            <motion.div
+              className="p-8 rounded-2xl border text-center"
+              style={{ background: 'var(--color-surface)', borderColor: 'rgba(255,107,107,0.3)' }}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+            >
+              <AlertCircle className="w-12 h-12 mx-auto mb-4" style={{ color: 'var(--color-coral)' }} />
+              <h1 className="text-xl font-bold mb-2">Too Many Attempts</h1>
+              <p className="text-sm mb-4" style={{ color: 'var(--color-text-secondary)' }}>
+                This transfer has been locked after 3 failed attempts.
+              </p>
+              <div className="text-4xl font-mono font-bold mb-2" style={{ color: 'var(--color-mint)' }}>
+                {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, '0')}
+              </div>
+              <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>Try again after the timer expires</p>
+            </motion.div>
           ) : (
             <>
-              <div className="mb-10">
+              <div className="mb-8">
                 <h1 className="text-3xl font-bold mb-3 tracking-tight">Claim Funds</h1>
                 <p style={{ color: 'var(--color-text-secondary)' }}>
-                  Enter the 6-digit OTP provided by the sender to release the funds.
+                  Enter your phone number and the 6-digit code from the sender.
                 </p>
               </div>
 
-              <div className="flex justify-between gap-2 mb-8">
-                {otp.map((digit, i) => (
+              {/* Phone input */}
+              <div className="mb-6 text-left">
+                <label className="block text-xs font-semibold uppercase tracking-widest mb-2"
+                  style={{ color: 'var(--color-text-tertiary)' }}>
+                  Your Phone Number
+                </label>
+                <div className="flex items-center gap-3 px-4 h-14 rounded-xl border"
+                  style={{
+                    background: 'var(--color-surface)',
+                    borderColor: isPhoneValid ? 'var(--color-mint)' : 'var(--color-border)'
+                  }}>
+                  <Phone className="w-4 h-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
                   <input
-                    key={i}
-                    ref={el => { inputRefs.current[i] = el }}
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    pattern="\d*"
-                    maxLength={6}
-                    value={digit}
-                    onChange={e => handleChange(i, e.target.value)}
-                    onKeyDown={e => handleKeyDown(i, e)}
-                    disabled={claimState === 'submitting'}
-                    className="w-12 h-16 rounded-xl text-center text-2xl font-bold border outline-none transition-all"
-                    style={{ 
-                      background: 'var(--color-surface)',
-                      borderColor: digit ? 'var(--color-mint)' : 'var(--color-border)',
-                      color: 'var(--color-text-primary)',
-                      fontFamily: 'var(--font-mono)'
-                    }}
+                    type="tel"
+                    inputMode="tel"
+                    placeholder="+919876543210"
+                    value={phone}
+                    onChange={e => setPhone(e.target.value)}
+                    className="flex-1 bg-transparent outline-none text-sm"
+                    style={{ color: 'var(--color-text-primary)' }}
+                    aria-label="Your phone number in international format"
                   />
-                ))}
+                </div>
+                <p className="text-xs mt-1.5" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Must match the number the sender used (E.164 format, e.g. +919876543210)
+                </p>
+              </div>
+
+              {/* OTP input */}
+              <div className="mb-8">
+                <label className="block text-xs font-semibold uppercase tracking-widest mb-2 text-left"
+                  style={{ color: 'var(--color-text-tertiary)' }}>
+                  6-Digit Code
+                </label>
+                <div className="flex justify-between gap-2">
+                  {otp.map((digit, i) => (
+                    <input
+                      key={i}
+                      ref={el => { inputRefs.current[i] = el }}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      pattern="\d*"
+                      maxLength={6}
+                      value={digit}
+                      onChange={e => handleChange(i, e.target.value)}
+                      onKeyDown={e => handleKeyDown(i, e)}
+                      disabled={claimState === 'submitting'}
+                      className="w-12 h-16 rounded-xl text-center text-2xl font-bold border outline-none transition-all"
+                      style={{
+                        background: 'var(--color-surface)',
+                        borderColor: digit ? 'var(--color-mint)' : 'var(--color-border)',
+                        color: 'var(--color-text-primary)',
+                        fontFamily: 'var(--font-mono)'
+                      }}
+                      aria-label={`OTP digit ${i + 1}`}
+                    />
+                  ))}
+                </div>
               </div>
 
               <AnimatePresence mode="wait">
@@ -196,12 +277,13 @@ export default function ClaimPage() {
               </AnimatePresence>
 
               <button
-                disabled={!isOtpComplete || claimState === 'submitting'}
+                id="claim-submit-btn"
+                disabled={!canSubmit}
                 onClick={submitClaim}
                 className="w-full h-14 rounded-xl font-semibold flex items-center justify-center transition-all"
                 style={{
-                  background: isOtpComplete ? 'var(--color-mint)' : 'var(--color-surface-elevated)',
-                  color: isOtpComplete ? 'var(--color-ink)' : 'var(--color-text-tertiary)',
+                  background: canSubmit ? 'var(--color-mint)' : 'var(--color-surface-elevated)',
+                  color: canSubmit ? 'var(--color-ink)' : 'var(--color-text-tertiary)',
                   opacity: claimState === 'submitting' ? 0.8 : 1
                 }}
               >

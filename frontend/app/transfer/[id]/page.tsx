@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'motion/react'
-import { CheckCircle2, Clock, Share2, Loader2, ArrowLeft } from 'lucide-react'
+import { CheckCircle2, Clock, Share2, Loader2, ArrowLeft, MessageSquare, Banknote } from 'lucide-react'
 import Link from 'next/link'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
+import { useTransferDetail } from '@/hooks/useTransferDetail'
 
 const STAGES = [
   { id: 'sent', label: 'Sent', sublabel: 'Transfer initiated on-chain' },
@@ -28,8 +29,19 @@ export default function TransferTrackerPage() {
 
   const [currentStage, setCurrentStage] = useState<StageId>('sent')
   const [blockConfirms, setBlockConfirms] = useState(0)
-  const [confettiLoaded, setConfettiLoaded] = useState(false)
+  const mountTime = useRef(Date.now())
   const publicClient = usePublicClient()
+
+  // Off-chain metadata: SMS status, off-ramp status, recipient nickname
+  const { data: detail } = useTransferDetail(transferId, true)
+
+  // Trigger a fresh event scan on mount (sub-minute freshness before Vercel cron fires)
+  useEffect(() => {
+    const cronSecret = process.env.NEXT_PUBLIC_CRON_SECRET // empty in prod — that's fine
+    fetch('/api/cron/poll-events', {
+      headers: cronSecret ? { Authorization: `Bearer ${cronSecret}` } : {},
+    }).catch(() => {})
+  }, [transferId])
 
   const { data: transfer, refetch } = useReadContract({
     address: REMITCHAIN_ADDRESS,
@@ -48,10 +60,10 @@ export default function TransferTrackerPage() {
     if (transfer.status === 1) {
       setCurrentStage('claimed')
     } else if (transfer.status === 0) {
-      // PENDING — advance through sent → confirmed → notified based on time
-      const age = Date.now() / 1000 - Number(transfer.createdAt ?? 0)
-      if (age > 30) setCurrentStage('notified')
-      else if (age > 12) setCurrentStage('confirmed')
+      // PENDING — advance through sent → confirmed → notified based on elapsed time since page mount
+      const ageMs = Date.now() - mountTime.current
+      if (ageMs > 30_000) setCurrentStage('notified')
+      else if (ageMs > 12_000) setCurrentStage('confirmed')
       else setCurrentStage('sent')
     }
   }, [transfer])
@@ -92,7 +104,6 @@ export default function TransferTrackerPage() {
   useEffect(() => {
     if (currentStage !== 'claimed') return
     import('canvas-confetti').then(({ default: confetti }) => {
-      setConfettiLoaded(true)
       confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 }, colors: ['#3DDC97', '#5FF0B0', '#ffffff'] })
       setTimeout(() => confetti({ particleCount: 60, spread: 100, origin: { y: 0.5 }, colors: ['#3DDC97', '#FFD700'] }), 400)
     })
@@ -104,10 +115,10 @@ export default function TransferTrackerPage() {
     const unwatch = publicClient.watchContractEvent({
       address: REMITCHAIN_ADDRESS,
       abi: RemitChainAbi,
-      eventName: 'RemittanceClaimed',
+      eventName: 'TransferClaimed',
       onLogs: (logs) => {
         const relevant = logs.find(l => {
-          const args = l.args as { transferId?: string }
+          const args = l.args as { transferId?: `0x${string}` }
           return args.transferId === transferId
         })
         if (relevant) {
@@ -226,21 +237,45 @@ export default function TransferTrackerPage() {
         <AnimatePresence>
           {currentStage === 'claimed' && (
             <motion.div
-              className="mt-4 p-6 rounded-2xl text-center"
+              className="mt-4 rounded-2xl overflow-hidden"
               initial={{ opacity: 0, y: 20, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              style={{ background: 'var(--color-mint-dim)', border: '1px solid var(--color-mint-glow)' }}
+              style={{ border: '1px solid var(--color-mint-glow)' }}
             >
-              <CheckCircle2 className="w-12 h-12 mx-auto mb-3" style={{ color: 'var(--color-mint)' }} />
-              <h2 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>Money delivered!</h2>
-              <p className="text-sm mb-4" style={{ color: 'var(--color-text-secondary)' }}>
-                The recipient has claimed the funds. The transfer is complete.
-              </p>
-              <Link href="/dashboard"
-                className="inline-flex items-center justify-center h-12 px-6 rounded-xl font-semibold text-sm w-full"
-                style={{ background: 'var(--color-mint)', color: 'var(--color-ink)' }}>
-                Done
-              </Link>
+              <div className="p-6 text-center" style={{ background: 'var(--color-mint-dim)' }}>
+                <CheckCircle2 className="w-12 h-12 mx-auto mb-3" style={{ color: 'var(--color-mint)' }} />
+                <h2 className="text-xl font-bold mb-1" style={{ color: 'var(--color-text-primary)' }}>
+                  Money delivered{detail?.recipientNickname ? ` to ${detail.recipientNickname}` : ''}!
+                </h2>
+                <p className="text-sm mb-4" style={{ color: 'var(--color-text-secondary)' }}>
+                  The recipient has claimed the funds. The transfer is complete.
+                </p>
+                <Link href="/dashboard"
+                  className="inline-flex items-center justify-center h-12 px-6 rounded-xl font-semibold text-sm w-full"
+                  style={{ background: 'var(--color-mint)', color: 'var(--color-ink)' }}>
+                  Done
+                </Link>
+              </div>
+
+              {/* Off-chain status strip */}
+              {detail && (
+                <div className="px-4 py-3 flex gap-4 text-xs" style={{ background: 'var(--color-surface)', borderTop: '1px solid var(--color-border)' }}>
+                  <div className="flex items-center gap-1.5">
+                    <MessageSquare className="w-3.5 h-3.5" style={{ color: detail.smsStatus === 'SENT' ? 'var(--color-mint)' : 'var(--color-text-tertiary)' }} />
+                    <span style={{ color: 'var(--color-text-secondary)' }}>
+                      SMS: {detail.smsStatus === 'SENT' ? 'Delivered' : detail.smsStatus === 'FAILED' ? 'Not sent' : 'Pending'}
+                    </span>
+                  </div>
+                  {detail.offrampStatus !== 'NONE' && (
+                    <div className="flex items-center gap-1.5">
+                      <Banknote className="w-3.5 h-3.5" style={{ color: detail.offrampStatus === 'COMPLETED' ? 'var(--color-mint)' : 'var(--color-text-tertiary)' }} />
+                      <span style={{ color: 'var(--color-text-secondary)' }}>
+                        {detail.offrampMethod ?? 'Payout'}: {detail.offrampStatus === 'COMPLETED' ? 'Complete' : detail.offrampStatus === 'PENDING' ? 'Processing…' : detail.offrampStatus}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

@@ -1,33 +1,89 @@
-import { NextRequest, NextResponse } from 'next/server'
+/**
+ * app/api/cron/recurring/route.ts
+ *
+ * Daily recurring transfer reminder cron — runs at 09:00 UTC.
+ * Migrated from TODO stub to real DB query.
+ *
+ * Finds all ACTIVE schedules where nextRunAt <= now + 24h
+ * and sends a push notification to the sender.
+ */
 
-// Vercel Cron: runs daily at midnight UTC
-// vercel.json: { "crons": [{ "path": "/api/cron/recurring", "schedule": "0 0 * * *" }] }
+import { NextRequest, NextResponse } from 'next/server'
+import { lte, eq, and } from 'drizzle-orm'
+import { db, schedules } from '@/lib/db'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  // Verify Vercel cron secret
   const auth = req.headers.get('authorization')
-  if (auth !== `Bearer ${process.env.CRON_SECRET}` && process.env.NODE_ENV === 'production') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const cronSecret = process.env.CRON_SECRET
+
+  if (process.env.NODE_ENV === 'production' && cronSecret) {
+    if (auth !== `Bearer ${cronSecret}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
   }
 
-  const now = Date.now()
-  const upcoming24h = now + 24 * 60 * 60 * 1000
+  if (!db) {
+    return NextResponse.json({ ok: true, message: 'DB not configured — add DATABASE_URL' })
+  }
 
-  // In production: query Vercel KV for schedules where nextRunAt <= upcoming24h
-  // For hackathon demo: this endpoint is wired but the in-memory store won't persist
-  // between serverless invocations — connect Vercel KV to fix.
+  const upcoming24h = Date.now() + 24 * 60 * 60 * 1000
 
-  // TODO(production): Query KV and fire push notifications
-  // const schedules = await kv.hvals('schedules')
-  // const due = schedules.filter(s => s.active && s.nextRunAt <= upcoming24h)
-  // for (const s of due) {
-  //   await fetch('/api/push/send', { method: 'POST', body: JSON.stringify({
-  //     address: s.ownerAddress, title: 'Reminder', body: `Send ${s.amount} QUSD to ${s.contactName}?`, url: '/send'
-  //   })})
-  // }
+  const dueSchedules = await db
+    .select()
+    .from(schedules)
+    .where(and(
+      eq(schedules.status, 'ACTIVE'),
+      lte(schedules.nextRunAt, upcoming24h),
+    ))
 
-  return NextResponse.json({ ok: true, message: 'Cron ran — connect Vercel KV for persistence' })
+  let notified = 0
+
+  for (const schedule of dueSchedules) {
+    try {
+      // Trigger a push notification to the sender (non-blocking)
+      const baseUrl =
+        process.env.NEXT_PUBLIC_APP_URL ??
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
+
+      await fetch(`${baseUrl}/api/push/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: schedule.senderAddress,
+          title: '🔁 Scheduled Transfer Due',
+          body: `Send ${schedule.amount} QUSD to ${schedule.recipientNickname ?? 'recipient'}?`,
+          url: '/send',
+        }),
+      })
+
+      // Advance nextRunAt based on frequency
+      let nextRunAt = schedule.nextRunAt
+      if (schedule.frequency === 'WEEKLY') {
+        nextRunAt += 7 * 24 * 60 * 60 * 1000
+      } else if (schedule.frequency === 'MONTHLY') {
+        const next = new Date(nextRunAt)
+        next.setMonth(next.getMonth() + 1)
+        nextRunAt = next.getTime()
+      }
+
+      await db
+        .update(schedules)
+        .set({ nextRunAt, lastRunAt: Date.now() })
+        .where(eq(schedules.id, schedule.id))
+
+      notified++
+    } catch (err) {
+      console.error('[recurring] Failed to notify schedule', schedule.id, err)
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    dueCount: dueSchedules.length,
+    notified,
+    ts: new Date().toISOString(),
+  })
 }

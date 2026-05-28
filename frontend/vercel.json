@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/poll-events",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/recurring",
+      "schedule": "0 9 * * *"
+    }
+  ]
+}

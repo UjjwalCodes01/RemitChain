@@ -1,9 +1,16 @@
+/**
+ * app/api/push/subscribe/route.ts
+ *
+ * Web Push subscription storage — migrated from in-memory Map to DB.
+ * Degrades to in-memory when DB is absent (local dev).
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { env } from '@/lib/env'
+import { eq } from 'drizzle-orm'
+import { db, pushSubscriptions } from '@/lib/db'
 
-// In-memory store for hackathon demo. Replace with Vercel KV in production.
-// Key: walletAddress (lowercase), Value: PushSubscription JSON
+// In-memory fallback
 const inMemoryStore = new Map<string, object>()
 
 const subscribeSchema = z.object({
@@ -24,12 +31,27 @@ export async function POST(req: NextRequest) {
 
   const { address, subscription } = parsed.data
 
-  // Store subscription — use Vercel KV if configured
-  if (env.KV_REST_API_URL && env.KV_REST_API_TOKEN) {
-    // TODO: Use @vercel/kv when KV env vars are connected
-    // await kv.set(`push:${address.toLowerCase()}`, subscription)
+  if (db) {
+    await db
+      .insert(pushSubscriptions)
+      .values({
+        userAddress: address.toLowerCase(),
+        endpoint: subscription.endpoint,
+        p256dh: subscription.keys.p256dh,
+        auth: subscription.keys.auth,
+        createdAt: Date.now(),
+      })
+      .onConflictDoUpdate({
+        target: pushSubscriptions.endpoint,
+        set: {
+          userAddress: address.toLowerCase(),
+          p256dh: subscription.keys.p256dh,
+          auth: subscription.keys.auth,
+        },
+      })
+  } else {
+    inMemoryStore.set(address.toLowerCase(), subscription)
   }
-  inMemoryStore.set(address.toLowerCase(), subscription)
 
   return NextResponse.json({ ok: true })
 }
@@ -38,6 +60,23 @@ export async function GET(req: NextRequest) {
   const address = req.nextUrl.searchParams.get('address')?.toLowerCase()
   if (!address) return NextResponse.json({ subscription: null })
 
-  const subscription = inMemoryStore.get(address) ?? null
-  return NextResponse.json({ subscription })
+  if (db) {
+    const rows = await db
+      .select()
+      .from(pushSubscriptions)
+      .where(eq(pushSubscriptions.userAddress, address))
+      .limit(1)
+
+    if (!rows[0]) return NextResponse.json({ subscription: null })
+
+    return NextResponse.json({
+      subscription: {
+        endpoint: rows[0].endpoint,
+        keys: { p256dh: rows[0].p256dh, auth: rows[0].auth },
+      },
+    })
+  }
+
+  const sub = inMemoryStore.get(address)
+  return NextResponse.json({ subscription: sub ?? null })
 }

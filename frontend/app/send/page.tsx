@@ -6,7 +6,7 @@ import { useAccount, useChainId, useReadContracts, useSignTypedData, useWriteCon
 import { ArrowRight, ChevronDown, CheckCircle2, Loader2, Phone, UserCircle2 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { encodeAbiParameters, keccak256, parseUnits, toHex, hexToSignature } from 'viem'
+import { encodeAbiParameters, encodePacked, keccak256, parseUnits, toHex, hexToSignature } from 'viem'
 import { NavBar } from '@/components/NavBar'
 import { useChainGuard } from '@/hooks/useChainGuard'
 import { env } from '@/lib/env'
@@ -146,9 +146,9 @@ export default function SendPage() {
       )
       const otpCommitHash = keccak256(encodedCommit)
 
-      // 4. Compute Phone Hash
-      const SALT = toHex(BigInt('0xDEADBEEF'), { size: 32 }) // Matching tests
-      const phoneHash = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'string' }], [SALT, phone]))
+      // 4. Compute Phone Hash — must use encodePacked to match abi.encodePacked(SALT, phone) in Solidity
+      const SALT = toHex(BigInt('0xDEADBEEF'), { size: 32 })
+      const phoneHash = keccak256(encodePacked(['bytes32', 'string'], [SALT, phone]))
 
       // 5. Setup Permit
       const value = parseUnits(numericAmount.toString(), QUSD_DECIMALS)
@@ -208,6 +208,34 @@ export default function SendPage() {
       setTxHash(tx)
       setOtpCode(generatedOtp)
       if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(50)
+
+      // 1. Persist off-chain metadata (nickname, txHash) to DB — fire-and-forget
+      //    This runs immediately so the tracker can show the recipient's name
+      fetch('/api/transfers/metadata', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transferId,
+          txHash: tx,
+          senderAddress: address,
+          recipientNickname: contact?.name ?? null,
+          amount: value.toString(),
+          corridor: corridorId,
+        }),
+      }).catch(err => console.warn('[metadata] Failed (non-fatal):', err))
+
+      // 2. Notify recipient via SMS — fire-and-forget
+      fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transferId,
+          recipientPhone: phone,
+          amount: numericAmount,
+          corridor: corridorId,
+        }),
+      }).catch(err => console.warn('[notify] SMS dispatch failed (non-fatal):', err))
+
       router.push(`/transfer/${transferId}`)
 
     } catch (err: unknown) {
