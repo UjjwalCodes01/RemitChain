@@ -15,7 +15,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { eq } from 'drizzle-orm'
 import { env } from '@/lib/env'
+import { db, transfers } from '@/lib/db'
 
 // ── Input schema ─────────────────────────────────────────────────────────────
 
@@ -96,6 +98,20 @@ async function sendSms(to: string, body: string): Promise<'sms' | 'stub'> {
   return 'sms'
 }
 
+// ── DB helper ────────────────────────────────────────────────────────────────
+
+async function updateSmsStatus(transferId: string, status: 'SENT' | 'FAILED') {
+  if (!db) return
+  try {
+    await db
+      .update(transfers)
+      .set({ smsStatus: status, updatedAt: Math.floor(Date.now() / 1000) })
+      .where(eq(transfers.id, transferId))
+  } catch (err) {
+    console.warn('[notify] DB smsStatus update failed (non-fatal):', err)
+  }
+}
+
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -127,6 +143,9 @@ export async function POST(req: NextRequest) {
   try {
     const channel = await sendSms(recipientPhone, message)
 
+    // ✅ Mark SMS as delivered in DB — this is what moves it out of "Pending" in the UI
+    await updateSmsStatus(transferId, 'SENT')
+
     console.log(
       JSON.stringify({
         level: 'info',
@@ -148,6 +167,10 @@ export async function POST(req: NextRequest) {
         ts: new Date().toISOString(),
       }),
     )
+
+    // ❌ Mark SMS as failed — surfaces in dashboard/stats as "SMS failed" instead of limbo
+    await updateSmsStatus(transferId, 'FAILED')
+
     // Non-fatal: don't fail the caller, just report
     return NextResponse.json({ sent: false, error: msg }, { status: 500 })
   }

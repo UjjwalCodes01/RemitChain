@@ -2,7 +2,7 @@
 
 import { motion, useSpring, useMotionValueEvent, AnimatePresence } from 'motion/react'
 import { useState, useEffect, useCallback } from 'react'
-import { useAccount, useChainId, useReadContracts, useWriteContract } from 'wagmi'
+import { useAccount, useChainId, usePublicClient, useWriteContract } from 'wagmi'
 import { ArrowRight, ChevronDown, CheckCircle2, Loader2, Phone, UserCircle2, AlertCircle, X } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -85,27 +85,12 @@ export default function SendPage() {
 
   // ─── Web3 Hooks ────────────────────────────────────────────────────────────
 
-  // Read only senderNonces — QUSD on this deployment doesn't have ERC20Permit
-  const {
-    data: senderNonceData,
-    refetch: refetchSenderNonce,
-    isLoading: noncesLoading,
-  } = useReadContracts({
-    contracts: [
-      {
-        address: REMITCHAIN_ADDRESS,
-        abi: RemitChainAbi,
-        functionName: 'senderNonces',
-        args: address ? [address] : undefined,
-      },
-    ],
-    query: {
-      enabled: Boolean(address),
-      retry: 3,
-      retryDelay: 1000,
-    },
-  })
+  // NOTE: We intentionally do NOT use useReadContracts for the nonce here.
+  // The QIE testnet RPC does not reliably support multicall (eth_call batching),
+  // which causes wagmi to throw "Failed to read on-chain nonces" errors on load.
+  // Instead, we fetch the nonce via a plain publicClient.readContract at send time.
 
+  const publicClient = usePublicClient()
   const { writeContractAsync } = useWriteContract()
 
   // ─── Send Flow ─────────────────────────────────────────────────────────────
@@ -115,22 +100,21 @@ export default function SendPage() {
     setSendError(null)
     setSendState('signing')
 
-    // Always fetch fresh senderNonce right before signing
+    // Fetch senderNonce via a plain eth_call — avoids wagmi multicall issues on QIE RPC
     let freshSenderNonce: bigint
     try {
-      const result = await refetchSenderNonce()
-      const d = result.data
-      if (!d || d.length < 1 || d[0].status !== 'success') throw new Error('nonce unresolved')
-      freshSenderNonce = d[0].result as bigint
-    } catch {
-      // Fallback to cached value
-      if (senderNonceData?.[0]?.status === 'success') {
-        freshSenderNonce = senderNonceData[0].result as bigint
-      } else {
-        setSendState('idle')
-        setSendError('Could not read on-chain data. Check your wallet is on QIE Testnet (chain 1983).')
-        return
-      }
+      if (!publicClient) throw new Error('No RPC client')
+      freshSenderNonce = await publicClient.readContract({
+        address: REMITCHAIN_ADDRESS,
+        abi: RemitChainAbi,
+        functionName: 'senderNonces',
+        args: [address],
+      }) as bigint
+    } catch (e) {
+      console.error('[send] Failed to read senderNonce:', e)
+      setSendState('idle')
+      setSendError('Could not connect to QIE network. Check your connection and that your wallet is on QIE Testnet (chain 1983).')
+      return
     }
 
     try {
@@ -172,12 +156,19 @@ export default function SendPage() {
 
       // 5. Step 1 — approve QUSD spend to EscrowVault
       setSendState('signing') // reuse 'signing' label for approve step
-      await writeContractAsync({
+      const approveTxHash = await writeContractAsync({
         address: QUSD_ADDRESS,
         abi: ERC20Abi,
         functionName: 'approve',
         args: [ESCROW_VAULT_ADDRESS, value],
       })
+
+      // CRITICAL: wait for the approve tx to be mined before calling sendRemittance.
+      // writeContractAsync resolves on submission, not confirmation. If we call
+      // sendRemittance immediately the vault sees allowance = 0 and safeTransferFrom reverts.
+      if (publicClient) {
+        await publicClient.waitForTransactionReceipt({ hash: approveTxHash })
+      }
 
       setSendState('broadcasting')
 
@@ -205,8 +196,9 @@ export default function SendPage() {
       }
       const dialCode = CORRIDOR_DIAL_CODE[corridorId] ?? '+91'
       const digits = phone.replace(/\D/g, '')
+      const cleanPhone = phone.replace(/[\s-]/g, '')
       // If already has full international digits (>10), just prefix +; otherwise use corridor code
-      const e164Phone = phone.startsWith('+') ? phone
+      const e164Phone = cleanPhone.startsWith('+') ? cleanPhone
         : digits.length > 10 ? `+${digits}`
         : `${dialCode}${digits.replace(/^0+/, '')}`
 
@@ -262,7 +254,7 @@ export default function SendPage() {
     }
   }
 
-  const canSend = isConnected && !wrongChain && numericAmount >= 1 && phone.length >= 8 && sendState === 'idle' && !noncesLoading
+  const canSend = isConnected && !wrongChain && numericAmount >= 1 && phone.length >= 8 && sendState === 'idle'
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-ink)' }}>

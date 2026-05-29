@@ -6,7 +6,8 @@ import { env } from './env'
 // Safely build connectors — WalletConnect can throw if projectId is missing or
 // the internal session cache is empty on first load (Object.values on null).
 function buildConnectors() {
-  const list = [injected()]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const list: any[] = [injected()]
   const wcProjectId = env.NEXT_PUBLIC_WC_PROJECT_ID
   if (wcProjectId && wcProjectId !== 'your_project_id_here') {
     try {

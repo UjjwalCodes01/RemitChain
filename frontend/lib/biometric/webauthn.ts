@@ -3,7 +3,6 @@ import {
   startAuthentication,
   browserSupportsWebAuthn,
 } from '@simplewebauthn/browser'
-import { get, set, del } from 'idb-keyval'
 
 /** Encode a Uint8Array as a base64url string (no padding) */
 function toBase64Url(buf: Uint8Array): string {
@@ -19,6 +18,8 @@ const REGISTERED_KEY = 'remitchain:biometric:registered'
 export { browserSupportsWebAuthn }
 
 export async function isBiometricRegistered(): Promise<boolean> {
+  if (typeof window === 'undefined') return false
+  const { get } = await import('idb-keyval')
   const flag = await get<boolean>(REGISTERED_KEY)
   return flag === true
 }
@@ -29,6 +30,8 @@ export async function isBiometricRegistered(): Promise<boolean> {
  * The credential never leaves the device.
  */
 export async function registerBiometric(userId: string, userName: string): Promise<boolean> {
+  if (typeof window === 'undefined') return false
+  const { set } = await import('idb-keyval')
   try {
     const opts = {
       challenge: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
@@ -65,6 +68,8 @@ export async function registerBiometric(userId: string, userName: string): Promi
  * Returns true if verified.
  */
 export async function verifyBiometric(): Promise<boolean> {
+  if (typeof window === 'undefined') return false
+  const { get } = await import('idb-keyval')
   try {
     const credId = await get<string>(CRED_KEY)
     if (!credId) return false
@@ -84,6 +89,8 @@ export async function verifyBiometric(): Promise<boolean> {
 }
 
 export async function removeBiometric(): Promise<void> {
+  if (typeof window === 'undefined') return
+  const { del } = await import('idb-keyval')
   await del(CRED_KEY)
   await del(REGISTERED_KEY)
 }

@@ -2,7 +2,7 @@
 
 import { useAccount } from 'wagmi'
 import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'motion/react'
 import { ArrowRight, Send, Clock, CheckCircle2, AlertCircle, BarChart2 } from 'lucide-react'
 import Link from 'next/link'
@@ -19,6 +19,26 @@ export default function DashboardPage() {
   const { formatted: balance, raw: balanceRaw, isLoading: balanceLoading } = useQUSDBalance(address)
   const { tier, isLoading: kycLoading, tierLabel, dailyLimit } = useKYCStatus(address)
   const { data: txHistory, isLoading: historyLoading } = useTransferHistory(address)
+  const [isUpgrading, setIsUpgrading] = useState(false)
+
+  const handleUpgrade = async () => {
+    if (!address) return
+    try {
+      setIsUpgrading(true)
+      const res = await fetch('/api/kyc/upgrade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userAddress: address })
+      })
+      if (!res.ok) throw new Error('Upgrade failed')
+      window.location.reload() // Refresh to reflect new tier
+    } catch (err) {
+      console.error(err)
+      alert('Failed to upgrade KYC.')
+    } finally {
+      setIsUpgrading(false)
+    }
+  }
 
   // Guard: must be connected
   useEffect(() => {
@@ -121,10 +141,11 @@ export default function DashboardPage() {
         >
           <KYCBadge
             tier={tier}
-            isLoading={kycLoading}
+            isLoading={kycLoading || isUpgrading}
             showUpgradeCTA={tier < 2}
+            onUpgrade={handleUpgrade}
           />
-          {!kycLoading && (
+          {!kycLoading && !isUpgrading && (
             <p
               className="text-xs mt-2"
               style={{ color: 'var(--color-text-tertiary)' }}

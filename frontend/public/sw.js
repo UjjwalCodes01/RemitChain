@@ -30,8 +30,15 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET and cross-origin
   if (request.method !== 'GET' || url.origin !== self.location.origin) return
 
-  // API routes: network only
-  if (url.pathname.startsWith('/api/')) return
+  // Skip Next.js internals, RSC payloads, API routes, and extensions
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/_next/') ||
+    url.searchParams.has('_rsc') ||
+    url.protocol === 'chrome-extension:'
+  ) {
+    return
+  }
 
   // Static assets: stale-while-revalidate
   event.respondWith(

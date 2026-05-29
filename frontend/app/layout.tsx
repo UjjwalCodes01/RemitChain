@@ -6,7 +6,7 @@ import { getMessages } from 'next-intl/server'
 import { Web3Provider } from '@/providers/Web3Provider'
 import { cookieToInitialState } from 'wagmi'
 import { wagmiConfig } from '@/lib/wagmi'
-import { BiometricGate } from '@/components/BiometricGate'
+import { BiometricGateClient } from '@/components/BiometricGateClient'
 import { PushPermissionPrompt } from '@/components/PushPermissionPrompt'
 import { ServiceWorkerRegistration } from '@/components/ServiceWorker'
 import { defaultLocale } from '@/lib/i18n/config'
@@ -81,7 +81,7 @@ export default async function RootLayout({
       <body>
         <NextIntlClientProvider messages={messages} locale={locale}>
           <Web3Provider initialState={initialState}>
-            <BiometricGate>
+            <BiometricGateClient>
               <div id="app-root" className="min-h-screen flex flex-col">
                 {children}
               </div>
@@ -95,7 +95,7 @@ export default async function RootLayout({
                 aria-atomic="true"
                 className="sr-only"
               />
-            </BiometricGate>
+            </BiometricGateClient>
           </Web3Provider>
         </NextIntlClientProvider>
         <Analytics />
