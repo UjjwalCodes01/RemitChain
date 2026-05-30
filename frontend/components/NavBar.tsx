@@ -38,6 +38,15 @@ export function NavBar({ hideConnect }: NavBarProps = {}) {
         <span className="hidden sm:inline">RemitChain</span>
       </Link>
 
+      {/* Center Links (Desktop only) */}
+      <nav className="hidden md:flex items-center gap-6 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+        <Link href="/send" className="hover:text-[var(--color-mint)] transition-colors">Instant Send</Link>
+        <Link href="/send/group" className="hover:text-[var(--color-mint)] transition-colors">Group Transfers</Link>
+        <Link href="/schedules" className="hover:text-[var(--color-mint)] transition-colors">Schedules</Link>
+        <Link href="/contacts" className="hover:text-[var(--color-mint)] transition-colors">Address Book</Link>
+        <Link href="/stats" className="hover:text-[var(--color-mint)] transition-colors">Live Tracking</Link>
+      </nav>
+
       {/* Right side */}
       <nav
         className="flex items-center gap-2 sm:gap-3"

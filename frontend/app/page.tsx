@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowRight, Shield, Zap, Globe2 } from 'lucide-react'
+import { ArrowRight, Shield, Zap, Globe2, Users, CalendarClock, Contact, BarChart2, Repeat, CheckCircle2 } from 'lucide-react'
 import { Metadata } from 'next'
 import { LiquidNumberPreview } from '@/components/LiquidNumberPreview'
 import { CorridorStrip } from '@/components/CorridorStrip'
@@ -132,6 +132,58 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── Features Grid ── */}
+      <section
+        id="features"
+        aria-label="Platform features"
+        className="py-16 px-4 border-t"
+        style={{ borderColor: 'var(--color-border)' }}
+      >
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl font-bold mb-4" style={{ letterSpacing: '-0.03em', color: 'var(--color-text-primary)' }}>
+              Everything you need to move money
+            </h2>
+            <p style={{ color: 'var(--color-text-secondary)' }}>
+              A full-stack remittance platform disguised as a simple messaging app.
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <FeatureCard 
+              icon={Zap} 
+              title="Instant Single Send" 
+              desc="Send QUSD to any phone number globally. Arrives in under 3 seconds."
+            />
+            <FeatureCard 
+              icon={Users} 
+              title="Group Transfers" 
+              desc="Pay your entire family back home in one single transaction."
+            />
+            <FeatureCard 
+              icon={CalendarClock} 
+              title="Recurring Schedules" 
+              desc="Set it and forget it. Automate your monthly remittances on-chain."
+            />
+            <FeatureCard 
+              icon={Contact} 
+              title="Smart Address Book" 
+              desc="Save frequent contacts. Secured locally on your device."
+            />
+            <FeatureCard 
+              icon={CheckCircle2} 
+              title="SMS Claim Links" 
+              desc="Recipients get an SMS with a link and OTP. No app download required."
+            />
+            <FeatureCard 
+              icon={BarChart2} 
+              title="Live Tracking" 
+              desc="Watch your transfer move across the globe in real-time."
+            />
+          </div>
+        </div>
+      </section>
+
       {/* ── Signature Moment: Liquid Number Preview ── */}
       <section
         id="liquid-number"
@@ -219,6 +271,30 @@ export default function LandingPage() {
           </div>
         </div>
       </footer>
+    </div>
+  )
+}
+
+function FeatureCard({ icon: Icon, title, desc }: { icon: any, title: string, desc: string }) {
+  return (
+    <div className="p-6 rounded-2xl border transition-colors hover:bg-white/5"
+      style={{
+        background: 'var(--color-surface)',
+        borderColor: 'var(--color-border)',
+      }}>
+      <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
+        style={{ 
+          background: 'var(--color-surface-elevated)', 
+          border: '1px solid var(--color-border)'
+        }}>
+        <Icon className="w-6 h-6" style={{ color: 'var(--color-mint)' }} />
+      </div>
+      <h3 className="font-semibold text-lg mb-2" style={{ color: 'var(--color-text-primary)' }}>
+        {title}
+      </h3>
+      <p className="text-sm" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
+        {desc}
+      </p>
     </div>
   )
 }

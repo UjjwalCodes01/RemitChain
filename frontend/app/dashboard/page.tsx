@@ -4,7 +4,7 @@ import { useAccount } from 'wagmi'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { motion } from 'motion/react'
-import { ArrowRight, Send, Clock, CheckCircle2, AlertCircle, BarChart2 } from 'lucide-react'
+import { ArrowRight, Send, Clock, CheckCircle2, AlertCircle, BarChart2, Users, CalendarClock, Contact, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { useQUSDBalance } from '@/hooks/useQUSDBalance'
 import { useKYCStatus } from '@/hooks/useKYCStatus'
@@ -217,6 +217,19 @@ export default function DashboardPage() {
           </Link>
         </motion.div>
 
+        {/* ── Quick Actions Grid ── */}
+        <motion.div
+          className="mb-8 grid grid-cols-2 sm:grid-cols-4 gap-3"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1], delay: 0.12 }}
+        >
+          <QuickActionLink href="/send/group" icon={Users} label="Group Send" />
+          <QuickActionLink href="/schedules" icon={CalendarClock} label="Schedules" />
+          <QuickActionLink href="/contacts" icon={Contact} label="Contacts" />
+          <QuickActionLink href="/settings" icon={Settings} label="Settings" />
+        </motion.div>
+
           {/* ── Recent transfers ── */}
           <motion.div
             initial={{ opacity: 0, y: 16 }}
@@ -345,5 +358,36 @@ function EmptyTransfersState() {
         </Link>
       </div>
     </div>
+  )
+}
+
+function QuickActionLink({ href, icon: Icon, label }: { href: string, icon: any, label: string }) {
+  return (
+    <Link
+      href={href}
+      className="press-scale flex flex-col items-center justify-center p-4 rounded-2xl border transition-colors hover:bg-white/5"
+      style={{
+        background: 'var(--color-surface)',
+        borderColor: 'var(--color-border)',
+        textDecoration: 'none',
+      }}
+    >
+      <div
+        className="w-10 h-10 rounded-full flex items-center justify-center mb-3 shrink-0 transition-transform group-hover:scale-110"
+        style={{ 
+          background: 'var(--color-surface-elevated)', 
+          border: '1px solid var(--color-border)'
+        }}
+        aria-hidden
+      >
+        <Icon className="w-5 h-5" style={{ color: 'var(--color-text-secondary)' }} />
+      </div>
+      <p
+        className="font-semibold text-xs text-center"
+        style={{ color: 'var(--color-text-primary)' }}
+      >
+        {label}
+      </p>
+    </Link>
   )
 }
