@@ -8,19 +8,18 @@ import { useAccount, useSignTypedData } from 'wagmi'
 import { REMITCHAIN_ADDRESS } from '@/lib/contracts'
 import { QUSD_ADDRESS } from '@/lib/contracts'
 import { keccak256, toBytes, parseUnits } from 'viem'
-import { v4 as uuidv4 } from 'uuid'
 
 export default function GroupSendPage() {
   const router = useRouter()
   const { address } = useAccount()
   const { signTypedDataAsync } = useSignTypedData()
   
-  const [recipients, setRecipients] = useState([{ id: uuidv4(), phone: '', amount: '' }])
+  const [recipients, setRecipients] = useState([{ id: crypto.randomUUID(), phone: '', amount: '' }])
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
 
   const addRecipient = () => {
-    setRecipients([...recipients, { id: uuidv4(), phone: '', amount: '' }])
+    setRecipients([...recipients, { id: crypto.randomUUID(), phone: '', amount: '' }])
   }
 
   const removeRecipient = (id: string) => {
