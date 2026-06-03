@@ -1,9 +1,9 @@
 'use client'
 
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams } from 'next/navigation'
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
-import { CheckCircle2, Loader2, AlertCircle, Phone } from 'lucide-react'
+import { CheckCircle2, Loader2, AlertCircle, Phone, FlaskConical, ChevronDown } from 'lucide-react'
 import { useReadContract } from 'wagmi'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
 import { NavBar } from '@/components/NavBar'
@@ -11,8 +11,13 @@ import Link from 'next/link'
 
 export default function ClaimPage() {
   const params = useParams()
+  const searchParams = useSearchParams()
   const txId = typeof params.txId === 'string' ? params.txId : Array.isArray(params.txId) ? params.txId[0] : ''
   const transferId = txId.startsWith('0x') ? (txId as `0x${string}`) : `0x${txId}` as `0x${string}`
+
+  const IS_DEMO = process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
+  const otpFromUrl = searchParams.get('otp')
+  const [demoRevealed, setDemoRevealed] = useState(false)
 
   const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState(['', '', '', '', '', ''])
@@ -240,6 +245,52 @@ export default function ClaimPage() {
                   Enter your phone number and the 6-digit code from the sender.
                 </p>
               </div>
+
+                {/* Demo Mode — OTP Reveal (only shown when ?otp= param present) */}
+                {IS_DEMO && otpFromUrl && (
+                  <motion.div
+                    className="mb-6 rounded-xl border overflow-hidden text-left"
+                    style={{ borderColor: 'rgba(245,166,35,0.4)', background: 'rgba(245,166,35,0.06)' }}
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                  >
+                    <button
+                      onClick={() => {
+                        setDemoRevealed(r => !r)
+                        if (!demoRevealed) {
+                          // Auto-fill the OTP inputs
+                          const digits = otpFromUrl.split('')
+                          if (digits.length === 6) setOtp(digits)
+                        }
+                      }}
+                      className="w-full flex items-center gap-2 px-4 py-3"
+                    >
+                      <FlaskConical className="w-4 h-4 shrink-0" style={{ color: '#F5A623' }} />
+                      <span className="text-sm font-semibold" style={{ color: '#F5A623' }}>Demo Mode — Reveal claim code</span>
+                      <ChevronDown
+                        className="w-4 h-4 ml-auto transition-transform"
+                        style={{ color: '#F5A623', transform: demoRevealed ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                      />
+                    </button>
+                    <AnimatePresence>
+                      {demoRevealed && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="px-4 pb-4 border-t" style={{ borderColor: 'rgba(245,166,35,0.2)' }}>
+                            <p className="text-xs mt-3 mb-1" style={{ color: 'rgba(245,166,35,0.7)' }}>Claim code (auto-filled above):</p>
+                            <div className="text-3xl font-black font-mono tracking-[0.2em]" style={{ color: 'var(--color-text-primary)' }}>
+                              {otpFromUrl}
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                )}
 
               {/* Phone input */}
               <div className="mb-6 text-left">

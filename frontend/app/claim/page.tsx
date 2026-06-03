@@ -11,8 +11,17 @@ export default function ClaimIndexPage() {
   const router = useRouter()
 
   const handleContinue = () => {
-    if (txId.length > 5) {
-      router.push(`/claim/${txId.trim()}`)
+    let input = txId.trim()
+    if (input.length > 5) {
+      // If the user pasted a full URL (e.g. from the 'Copy claim link' button)
+      // Extract everything after /claim/ to avoid nested routes (404)
+      if (input.includes('/claim/')) {
+        input = input.substring(input.indexOf('/claim/') + 7)
+      } else if (input.startsWith('claim/')) {
+        input = input.substring(6)
+      }
+      
+      router.push(`/claim/${input}`)
     }
   }
 

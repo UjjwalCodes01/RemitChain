@@ -8,9 +8,13 @@
  *   This route sends the recipient a claim URL (/claim/[txId]) via SMS.
  *   The sender shares the 6-digit code with the recipient verbally or via WhatsApp.
  *
- * Twilio:
- *   If TWILIO_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM are configured → real SMS.
- *   Otherwise → logs [SMS-STUB] to console (functional for local demo).
+ * SMS provider:
+ *   Delegated to lib/sms/send.ts — Twilio when configured, stub otherwise.
+ *
+ * Demo Mode:
+ *   In demo mode, the OTP is also surfaced on-screen via the /api/transfers/[id]/demo-otp
+ *   endpoint (written by the sender's browser). No extra action needed here — SMS still
+ *   fires for verified numbers, proving the real path works.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -18,6 +22,7 @@ import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { env } from '@/lib/env'
 import { db, transfers } from '@/lib/db'
+import { sendSms } from '@/lib/sms/send'
 
 // ── Input schema ─────────────────────────────────────────────────────────────
 
@@ -65,39 +70,6 @@ function buildMessage(params: {
   )
 }
 
-// ── Twilio sender ─────────────────────────────────────────────────────────────
-
-async function sendSms(to: string, body: string): Promise<'sms' | 'stub'> {
-  const { TWILIO_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM } = env
-
-  if (!TWILIO_SID || !TWILIO_AUTH_TOKEN || !TWILIO_FROM) {
-    console.log(`[SMS-STUB] To: ${to}\n${body}`)
-    return 'stub'
-  }
-
-  // Use Twilio REST API directly — no SDK dependency needed
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`
-  const auth = Buffer.from(`${TWILIO_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64')
-
-  const form = new URLSearchParams({ From: TWILIO_FROM, To: to, Body: body })
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${auth}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: form.toString(),
-  })
-
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Twilio error ${res.status}: ${text.slice(0, 200)}`)
-  }
-
-  return 'sms'
-}
-
 // ── DB helper ────────────────────────────────────────────────────────────────
 
 async function updateSmsStatus(transferId: string, status: 'SENT' | 'FAILED') {
@@ -140,30 +112,28 @@ export async function POST(req: NextRequest) {
   const lang = detectLang(recipientPhone)
   const message = buildMessage({ lang, amount, corridor, claimUrl })
 
-  try {
-    const channel = await sendSms(recipientPhone, message)
+  const result = await sendSms({ to: recipientPhone, body: message })
 
-    // ✅ Mark SMS as delivered in DB — this is what moves it out of "Pending" in the UI
+  if (result.success) {
     await updateSmsStatus(transferId, 'SENT')
 
     console.log(
       JSON.stringify({
         level: 'info',
         step: 'notify.sent',
-        channel,
+        channel: result.channel,
         transferId: transferId.slice(0, 10) + '…',
         ts: new Date().toISOString(),
       }),
     )
 
-    return NextResponse.json({ sent: true, channel })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ sent: true, channel: result.channel })
+  } else {
     console.error(
       JSON.stringify({
         level: 'error',
         step: 'notify.failed',
-        err: msg.slice(0, 200),
+        err: result.error?.slice(0, 200),
         ts: new Date().toISOString(),
       }),
     )
@@ -172,6 +142,6 @@ export async function POST(req: NextRequest) {
     await updateSmsStatus(transferId, 'FAILED')
 
     // Non-fatal: don't fail the caller, just report
-    return NextResponse.json({ sent: false, error: msg }, { status: 500 })
+    return NextResponse.json({ sent: false, error: result.error }, { status: 500 })
   }
 }

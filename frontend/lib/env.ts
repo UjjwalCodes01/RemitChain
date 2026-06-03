@@ -49,7 +49,18 @@ const envSchema = z.object({
   // Razorpay (UPI off-ramp sandbox)
   RAZORPAY_KEY_ID: z.string().optional().or(z.literal('').transform(() => undefined)),
   RAZORPAY_KEY_SECRET: z.string().optional().or(z.literal('').transform(() => undefined)),
+
+  // ── Demo Mode ────────────────────────────────────────────────────────────────
+  // Surfaces plaintext OTPs on-screen so judges can test end-to-end without SMS.
+  // NEXT_PUBLIC_DEMO_MODE: frontend affordances (demo banner, OTP card, hint).
+  // DEMO_MODE:             server-only — controls the demo-otp API endpoint.
+  // SAFETY GUARD: DEMO_MODE + mainnet chainId = boot-time fatal error (see below).
+  NEXT_PUBLIC_DEMO_MODE: z.coerce.boolean().default(false),
+  DEMO_MODE: z.coerce.boolean().default(false),
 })
+
+// Mainnet chainId — Demo Mode must NEVER run here.
+const MAINNET_CHAIN_ID = 1
 
 function validateEnv() {
   const parsed = envSchema.safeParse({
@@ -73,12 +84,26 @@ function validateEnv() {
     UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
     RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET,
+    NEXT_PUBLIC_DEMO_MODE: process.env.NEXT_PUBLIC_DEMO_MODE,
+    DEMO_MODE: process.env.DEMO_MODE,
   })
 
   if (!parsed.success) {
     console.error('❌ Invalid environment variables:')
     console.error(parsed.error.flatten().fieldErrors)
     throw new Error('Invalid environment variables — check .env')
+  }
+
+  // ── Mainnet safety guard ─────────────────────────────────────────────────
+  // Demo Mode surfaces plaintext OTPs on-screen. This is NEVER acceptable
+  // on mainnet where real funds are at stake. This guard makes it
+  // structurally impossible to ship Demo Mode to Ethereum mainnet by accident.
+  if (parsed.data.DEMO_MODE && parsed.data.NEXT_PUBLIC_CHAIN_ID === MAINNET_CHAIN_ID) {
+    throw new Error(
+      'FATAL: DEMO_MODE cannot be enabled on Ethereum mainnet (chainId=1). ' +
+      'Surfacing OTPs on-screen on mainnet is a critical security vulnerability. ' +
+      'Disable DEMO_MODE or switch to a testnet chain ID.'
+    )
   }
 
   return parsed.data

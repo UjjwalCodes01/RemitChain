@@ -230,6 +230,16 @@ export default function SendPage() {
         if (!r.ok) console.warn('[notify] SMS 400:', await r.json().catch(() => r.text()))
       }).catch(err => console.warn('[notify] Failed (non-fatal):', err))
 
+      // 3. In demo mode, persist plaintext OTP so the tracker can surface it on-screen
+      //    This never runs in production (NEXT_PUBLIC_DEMO_MODE defaults to false).
+      if (process.env.NEXT_PUBLIC_DEMO_MODE === 'true') {
+        fetch(`/api/transfers/${transferId}/demo-otp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ otp: generatedOtp }),
+        }).catch(err => console.warn('[demo-otp] store failed (non-fatal):', err))
+      }
+
       router.push(`/transfer/${transferId}`)
 
     } catch (err: unknown) {
