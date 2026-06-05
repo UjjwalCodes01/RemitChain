@@ -13,13 +13,16 @@ const envSchema = z.object({
   NEXT_PUBLIC_WC_PROJECT_ID: z.string().optional(),
   NEXT_PUBLIC_RELAYER_ADDRESS: z
     .string()
-    .regex(/^0x[a-fA-F0-9]{40}$/, 'Must be a valid EVM address'),
+    .regex(/^0x[a-fA-F0-9]{40}$/, 'Must be a valid EVM address')
+    .optional()
+    .or(z.literal('').transform(() => undefined)),
   RELAYER_PRIVATE_KEY: z
     .string()
     .regex(/^0x[a-fA-F0-9]{64}$/, 'Must be a 32-byte hex string starting with 0x')
-    .optional(),
+    .optional()
+    .or(z.literal('').transform(() => undefined)),
 
-  // App URL (used for SMS claim links)
+  // App URL (used for claim links in email/SMS)
   NEXT_PUBLIC_APP_URL: z.string().url().optional().or(z.literal('').transform(() => undefined)),
 
   // Web Push (VAPID)
@@ -31,7 +34,7 @@ const envSchema = z.object({
   KV_REST_API_URL: z.string().url().optional().or(z.literal('').transform(() => undefined)),
   KV_REST_API_TOKEN: z.string().optional().or(z.literal('').transform(() => undefined)),
 
-  // Twilio SMS (server-only, optional — degrades to stub mode if absent)
+  // Twilio SMS (server-only, optional — degrades to stub when absent)
   TWILIO_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_FROM: z.string().optional(),
@@ -50,17 +53,38 @@ const envSchema = z.object({
   RAZORPAY_KEY_ID: z.string().optional().or(z.literal('').transform(() => undefined)),
   RAZORPAY_KEY_SECRET: z.string().optional().or(z.literal('').transform(() => undefined)),
 
+  // ── Email OTP — Resend (free tier, production channel on mainnet) ────────────
+  // Sign up at resend.com — 3,000 emails/month free.
+  // RESEND_FROM: e.g. "RemitChain <onboarding@resend.dev>" (no domain needed for demo)
+  RESEND_API_KEY: z.string().optional().or(z.literal('').transform(() => undefined)),
+  RESEND_FROM: z.string().optional().or(z.literal('').transform(() => undefined)),
+
+  // OTP_CHANNEL: selects the notification channel.
+  //   'email' — Resend (default on mainnet, zero cost)
+  //   'sms'   — Twilio (optional, kept for backward compatibility)
+  //   'demo'  — on-screen only, testnet only
+  OTP_CHANNEL: z.enum(['email', 'sms', 'demo']).default('email'),
+
+  // ── Judge Access Token (mainnet-safe alternative to demo mode) ───────────────
+  // A scoped unguessable token. When ?judge=<token> is present, the sender's
+  // own current-session transfers surface their OTP on the success screen.
+  // Public users never see OTPs. Only valid for the judge's own transfers.
+  JUDGE_ACCESS_TOKEN: z.string().optional().or(z.literal('').transform(() => undefined)),
+
   // ── Demo Mode ────────────────────────────────────────────────────────────────
-  // Surfaces plaintext OTPs on-screen so judges can test end-to-end without SMS.
-  // NEXT_PUBLIC_DEMO_MODE: frontend affordances (demo banner, OTP card, hint).
+  // Surfaces plaintext OTPs on-screen so judges can test without SMS/email.
+  // NEXT_PUBLIC_DEMO_MODE: frontend affordances (demo banner, OTP card).
   // DEMO_MODE:             server-only — controls the demo-otp API endpoint.
-  // SAFETY GUARD: DEMO_MODE + mainnet chainId = boot-time fatal error (see below).
-  NEXT_PUBLIC_DEMO_MODE: z.coerce.boolean().default(false),
-  DEMO_MODE: z.coerce.boolean().default(false),
+  // SAFETY GUARD: DEMO_MODE + QIE Mainnet chainId (1990) = boot-time fatal error.
+  NEXT_PUBLIC_DEMO_MODE: z.string().optional().transform(v => v === 'true').default('false'),
+  DEMO_MODE: z.string().optional().transform(v => v === 'true').default('false'),
 })
 
-// Mainnet chainId — Demo Mode must NEVER run here.
-const MAINNET_CHAIN_ID = 1
+// Chain IDs where Demo Mode is FORBIDDEN (real funds at stake)
+const PRODUCTION_CHAIN_IDS = [
+  1,    // Ethereum mainnet
+  1990, // QIE mainnet
+]
 
 function validateEnv() {
   const parsed = envSchema.safeParse({
@@ -84,6 +108,10 @@ function validateEnv() {
     UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
     RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID,
     RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET,
+    RESEND_API_KEY: process.env.RESEND_API_KEY,
+    RESEND_FROM: process.env.RESEND_FROM,
+    OTP_CHANNEL: process.env.OTP_CHANNEL,
+    JUDGE_ACCESS_TOKEN: process.env.JUDGE_ACCESS_TOKEN,
     NEXT_PUBLIC_DEMO_MODE: process.env.NEXT_PUBLIC_DEMO_MODE,
     DEMO_MODE: process.env.DEMO_MODE,
   })
@@ -94,15 +122,15 @@ function validateEnv() {
     throw new Error('Invalid environment variables — check .env')
   }
 
-  // ── Mainnet safety guard ─────────────────────────────────────────────────
+  // ── Production safety guard ──────────────────────────────────────────────────
   // Demo Mode surfaces plaintext OTPs on-screen. This is NEVER acceptable
-  // on mainnet where real funds are at stake. This guard makes it
-  // structurally impossible to ship Demo Mode to Ethereum mainnet by accident.
-  if (parsed.data.DEMO_MODE && parsed.data.NEXT_PUBLIC_CHAIN_ID === MAINNET_CHAIN_ID) {
+  // on production chains where real funds are at stake. This check makes it
+  // structurally impossible to ship Demo Mode to mainnet by accident.
+  if (parsed.data.DEMO_MODE && PRODUCTION_CHAIN_IDS.includes(parsed.data.NEXT_PUBLIC_CHAIN_ID)) {
     throw new Error(
-      'FATAL: DEMO_MODE cannot be enabled on Ethereum mainnet (chainId=1). ' +
-      'Surfacing OTPs on-screen on mainnet is a critical security vulnerability. ' +
-      'Disable DEMO_MODE or switch to a testnet chain ID.'
+      `FATAL: DEMO_MODE cannot be enabled on a production chain (chainId=${parsed.data.NEXT_PUBLIC_CHAIN_ID}). ` +
+      `Surfacing OTPs on-screen on mainnet is a critical security vulnerability. ` +
+      `Disable DEMO_MODE=false or switch to a testnet chain ID (e.g. 1983).`
     )
   }
 

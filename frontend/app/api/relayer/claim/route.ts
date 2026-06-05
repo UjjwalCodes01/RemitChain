@@ -29,11 +29,16 @@ import {
 import { db, transfers, otpAttempts } from '@/lib/db'
 import { getIpRatelimit } from '@/lib/db/redis'
 
-// ── Chain definition ──────────────────────────────────────────────────────────
+// ── Active chain (selected by NEXT_PUBLIC_CHAIN_ID) ──────────────────────────
+// This must match the chain the contracts are deployed on.
+// Switching environments requires only env var changes — no code edits.
 
-const qieTestnet = {
-  id: Number(env.NEXT_PUBLIC_CHAIN_ID),
-  name: 'QIE Testnet',
+const CHAIN_ID = Number(env.NEXT_PUBLIC_CHAIN_ID)
+const IS_MAINNET = CHAIN_ID === 1990
+
+const activeChain = {
+  id: CHAIN_ID,
+  name: IS_MAINNET ? 'QIE' : 'QIE Testnet',
   nativeCurrency: { name: 'QIE', symbol: 'QIE', decimals: 18 },
   rpcUrls: { default: { http: [env.NEXT_PUBLIC_RPC_URL] } },
 } as const
@@ -199,7 +204,7 @@ export async function POST(req: NextRequest) {
   }
 
   const publicClient = createPublicClient({
-    chain: qieTestnet,
+    chain: activeChain,
     transport: http(env.NEXT_PUBLIC_RPC_URL),
   })
 
@@ -286,7 +291,7 @@ export async function POST(req: NextRequest) {
       relayerPrivateKey,
       relayerAddress,
       rpcUrl: env.NEXT_PUBLIC_RPC_URL,
-      chain: qieTestnet as Parameters<typeof buildAndBroadcastClaim>[0]['chain'],
+      chain: activeChain as Parameters<typeof buildAndBroadcastClaim>[0]['chain'],
     })
 
     // 12. Persist to DB + clear attempts

@@ -51,8 +51,14 @@ export const transfers = pgTable(
     offrampMethod: text('offramp_method'),      // UPI | GCASH | AGENT | null
     offrampReference: text('offramp_reference'), // payout provider txn id
 
-    // SMS delivery
+    // SMS delivery (backward compat)
     smsStatus: text('sms_status').notNull().default('PENDING'),
+    // PENDING | SENT | FAILED
+
+    // Email delivery (production channel on mainnet — Resend free tier)
+    // recipientEmail is stored off-chain only — NEVER put on-chain.
+    recipientEmail: text('recipient_email'),       // nullable — set at send time
+    emailStatus: text('email_status').notNull().default('PENDING'),
     // PENDING | SENT | FAILED
 
     // Timestamps

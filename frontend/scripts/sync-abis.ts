@@ -1,19 +1,49 @@
 #!/usr/bin/env tsx
 /**
  * sync-abis.ts
- * Reads compiled Foundry artifacts + deployment addresses,
- * writes type-safe ABI files to lib/abis/ and lib/contracts.ts.
+ * Reads compiled Foundry artifacts + deployment addresses for ALL networks,
+ * writes type-safe ABI files to lib/abis/ and updates lib/contracts.ts
+ * with the chain-keyed address map.
+ *
  * Run: pnpm sync:abis
+ *
+ * After mainnet deploy: the qie_mainnet.json file will be present and this
+ * script will populate the 1990 entry in CONTRACT_ADDRESSES automatically.
  */
 
 import fs from 'node:fs'
 import path from 'node:path'
 
-const ROOT = path.resolve(__dirname, '../..')
-const OUT_DIR = path.join(ROOT, 'contracts/out')
-const DEPLOY_FILE = path.join(ROOT, 'contracts/deployments/qie_testnet.json')
-const ABIS_DIR = path.join(__dirname, '../lib/abis')
+const ROOT      = path.resolve(__dirname, '../..')
+const OUT_DIR   = path.join(ROOT, 'contracts/out')
+const DEPLOY_DIR = path.join(ROOT, 'contracts/deployments')
+const ABIS_DIR  = path.join(__dirname, '../lib/abis')
 const CONTRACTS_FILE = path.join(__dirname, '../lib/contracts.ts')
+
+// Network definitions — add more here as chains are added
+const NETWORKS = [
+  { file: 'qie_testnet.json',  chainId: 1983, label: 'QIE Testnet' },
+  { file: 'qie_mainnet.json',  chainId: 1990, label: 'QIE Mainnet' },
+] as const
+
+// Mainnet QUSDC (canonical stablecoin on QIE mainnet, 6 decimals, $1 rate)
+const MAINNET_QUSDC = '0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5'
+
+interface DeployedContracts {
+  TimelockController: string
+  KYCRegistry: string
+  EscrowVault: string
+  RemitChain: string
+}
+interface DeploymentConfig {
+  qusd: string
+  feeTreasury: string
+  initialFeeBps: number
+}
+interface DeploymentFile {
+  contracts: DeployedContracts
+  config: DeploymentConfig
+}
 
 function readAbi(contractDir: string, contractName: string): unknown[] {
   const jsonPath = path.join(OUT_DIR, contractDir, `${contractName}.json`)
@@ -35,7 +65,6 @@ export const ${name}Abi = ${JSON.stringify(abi, null, 2)} as const;
 }
 
 function main(): void {
-  // Ensure output directory exists
   fs.mkdirSync(ABIS_DIR, { recursive: true })
 
   console.log('\n🔄 Syncing ABIs from contracts/out/...\n')
@@ -50,102 +79,83 @@ function main(): void {
   const kycRegistryAbi = readAbi('KYCRegistry.sol', 'KYCRegistry')
   writeAbiFile('KYCRegistry', kycRegistryAbi)
 
-  // Minimal ERC20 ABI (only what we use)
+  // Minimal ERC20 ABI (only what RemitChain frontend uses)
   const erc20Abi = [
-    {
-      type: 'function',
-      name: 'balanceOf',
-      inputs: [{ name: 'account', type: 'address' }],
-      outputs: [{ name: '', type: 'uint256' }],
-      stateMutability: 'view',
-    },
-    {
-      type: 'function',
-      name: 'approve',
-      inputs: [
-        { name: 'spender', type: 'address' },
-        { name: 'amount', type: 'uint256' },
-      ],
-      outputs: [{ name: '', type: 'bool' }],
-      stateMutability: 'nonpayable',
-    },
-    {
-      type: 'function',
-      name: 'allowance',
-      inputs: [
-        { name: 'owner', type: 'address' },
-        { name: 'spender', type: 'address' },
-      ],
-      outputs: [{ name: '', type: 'uint256' }],
-      stateMutability: 'view',
-    },
-    {
-      type: 'function',
-      name: 'decimals',
-      inputs: [],
-      outputs: [{ name: '', type: 'uint8' }],
-      stateMutability: 'view',
-    },
-    {
-      type: 'function',
-      name: 'symbol',
-      inputs: [],
-      outputs: [{ name: '', type: 'string' }],
-      stateMutability: 'view',
-    },
-    {
-      type: 'event',
-      name: 'Transfer',
-      inputs: [
-        { name: 'from', type: 'address', indexed: true },
-        { name: 'to', type: 'address', indexed: true },
-        { name: 'value', type: 'uint256', indexed: false },
-      ],
-    },
-    {
-      type: 'event',
-      name: 'Approval',
-      inputs: [
-        { name: 'owner', type: 'address', indexed: true },
-        { name: 'spender', type: 'address', indexed: true },
-        { name: 'value', type: 'uint256', indexed: false },
-      ],
-    },
-    {
-      type: 'function',
-      name: 'permit',
-      inputs: [
-        { name: 'owner', type: 'address' },
-        { name: 'spender', type: 'address' },
-        { name: 'value', type: 'uint256' },
-        { name: 'deadline', type: 'uint256' },
-        { name: 'v', type: 'uint8' },
-        { name: 'r', type: 'bytes32' },
-        { name: 's', type: 'bytes32' },
-      ],
-      outputs: [],
-      stateMutability: 'nonpayable',
-    },
-    {
-      type: 'function',
-      name: 'nonces',
-      inputs: [{ name: 'owner', type: 'address' }],
-      outputs: [{ name: '', type: 'uint256' }],
-      stateMutability: 'view',
-    },
+    { type: 'function', name: 'balanceOf', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
+    { type: 'function', name: 'approve', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'nonpayable' },
+    { type: 'function', name: 'allowance', inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
+    { type: 'function', name: 'decimals', inputs: [], outputs: [{ name: '', type: 'uint8' }], stateMutability: 'view' },
+    { type: 'function', name: 'symbol', inputs: [], outputs: [{ name: '', type: 'string' }], stateMutability: 'view' },
+    { type: 'event', name: 'Transfer', inputs: [{ name: 'from', type: 'address', indexed: true }, { name: 'to', type: 'address', indexed: true }, { name: 'value', type: 'uint256', indexed: false }] },
+    { type: 'event', name: 'Approval', inputs: [{ name: 'owner', type: 'address', indexed: true }, { name: 'spender', type: 'address', indexed: true }, { name: 'value', type: 'uint256', indexed: false }] },
+    { type: 'function', name: 'permit', inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'deadline', type: 'uint256' }, { name: 'v', type: 'uint8' }, { name: 'r', type: 'bytes32' }, { name: 's', type: 'bytes32' }], outputs: [], stateMutability: 'nonpayable' },
+    { type: 'function', name: 'nonces', inputs: [{ name: 'owner', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' },
   ]
   writeAbiFile('ERC20', erc20Abi)
 
-  // Read deployment addresses
-  if (!fs.existsSync(DEPLOY_FILE)) {
-    throw new Error(`Deployment file not found: ${DEPLOY_FILE}`)
+  // Read deployment files for all known networks
+  interface NetworkAddresses {
+    remitChain: string
+    escrowVault: string
+    kycRegistry: string
+    timelockAddress: string
+    qusd: string
+    feeTreasury: string
+    deployed: boolean
   }
-  const deployments = JSON.parse(fs.readFileSync(DEPLOY_FILE, 'utf-8'))
-  const { contracts, config } = deployments
 
-  // Write contracts.ts
+  const networkData: Record<number, NetworkAddresses> = {
+    1983: {
+      remitChain:      '0x0000000000000000000000000000000000000000',
+      escrowVault:     '0x0000000000000000000000000000000000000000',
+      kycRegistry:     '0x0000000000000000000000000000000000000000',
+      timelockAddress: '0x0000000000000000000000000000000000000000',
+      qusd:            '0x56AD1E16394Ae6F8B3204b07e988f9d37497e58f',
+      feeTreasury:     '0x3660362BeB3A95CE16D981e7D30E1e025E741393',
+      deployed: false,
+    },
+    1990: {
+      remitChain:      '0x0000000000000000000000000000000000000000',
+      escrowVault:     '0x0000000000000000000000000000000000000000',
+      kycRegistry:     '0x0000000000000000000000000000000000000000',
+      timelockAddress: '0x0000000000000000000000000000000000000000',
+      qusd:            MAINNET_QUSDC,
+      feeTreasury:     '0x3660362BeB3A95CE16D981e7D30E1e025E741393',
+      deployed: false,
+    },
+  }
+
+  let feeBps = 10
+  const networksFound: string[] = []
+
+  for (const network of NETWORKS) {
+    const deployFile = path.join(DEPLOY_DIR, network.file)
+    if (!fs.existsSync(deployFile)) {
+      console.log(`  ⚠ ${network.file} not found — skipping ${network.label}`)
+      continue
+    }
+
+    const dep: DeploymentFile = JSON.parse(fs.readFileSync(deployFile, 'utf-8'))
+    feeBps = dep.config.initialFeeBps ?? feeBps
+
+    networkData[network.chainId] = {
+      remitChain:      dep.contracts.RemitChain,
+      escrowVault:     dep.contracts.EscrowVault,
+      kycRegistry:     dep.contracts.KYCRegistry,
+      timelockAddress: dep.contracts.TimelockController,
+      qusd:            dep.config.qusd,
+      feeTreasury:     dep.config.feeTreasury,
+      deployed: true,
+    }
+
+    networksFound.push(`${network.label} (${network.chainId})`)
+    console.log(`  ✓ ${network.file} (${network.label})`)
+  }
+
+  // Write contracts.ts with the chain-keyed address map
   const contractsContent = `// Auto-generated by scripts/sync-abis.ts — DO NOT EDIT MANUALLY
-// Source: contracts/deployments/qie_testnet.json
+// Networks: ${networksFound.join(', ') || 'none yet'}
+// Regenerate: pnpm sync:abis
 
 import { RemitChainAbi } from './abis/RemitChain'
 import { EscrowVaultAbi } from './abis/EscrowVault'
@@ -154,22 +164,62 @@ import { ERC20Abi } from './abis/ERC20'
 
 export { RemitChainAbi, EscrowVaultAbi, KYCRegistryAbi, ERC20Abi }
 
-// ─── Contract Addresses (QIE Testnet, Chain ID 1983) ────────────────────────
+// ─── Per-chain contract addresses ───────────────────────────────────────────
+const CONTRACT_ADDRESSES = {
+  // QIE Testnet (chainId 1983)
+  1983: {
+    remitChain:      '${networkData[1983].remitChain}' as const,
+    escrowVault:     '${networkData[1983].escrowVault}' as const,
+    kycRegistry:     '${networkData[1983].kycRegistry}' as const,
+    timelockAddress: '${networkData[1983].timelockAddress}' as const,
+    qusd:            '${networkData[1983].qusd}' as const,
+    feeTreasury:     '${networkData[1983].feeTreasury}' as const,
+  },
+  // QIE Mainnet (chainId 1990) — populated after: forge script Deploy.s.sol --rpc-url qie_mainnet --broadcast
+  1990: {
+    remitChain:      '${networkData[1990].remitChain}' as const,
+    escrowVault:     '${networkData[1990].escrowVault}' as const,
+    kycRegistry:     '${networkData[1990].kycRegistry}' as const,
+    timelockAddress: '${networkData[1990].timelockAddress}' as const,
+    qusd:            '${networkData[1990].qusd}' as const, // Official QUSDC on QIE mainnet
+    feeTreasury:     '${networkData[1990].feeTreasury}' as const,
+  },
+} as const
 
-export const REMITCHAIN_ADDRESS = '${contracts.RemitChain}' as const
-export const ESCROW_VAULT_ADDRESS = '${contracts.EscrowVault}' as const
-export const KYC_REGISTRY_ADDRESS = '${contracts.KYCRegistry}' as const
-export const TIMELOCK_ADDRESS = '${contracts.TimelockController}' as const
-export const QUSD_ADDRESS = '${config.qusd}' as const
-export const FEE_TREASURY_ADDRESS = '${config.feeTreasury}' as const
+type SupportedChainId = keyof typeof CONTRACT_ADDRESSES
+
+const _chainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID) as SupportedChainId
+
+function getContracts() {
+  const addrs = CONTRACT_ADDRESSES[_chainId]
+  if (!addrs) {
+    throw new Error(
+      \`[contracts] No addresses configured for chain \${_chainId}. \` +
+      \`Supported: \${Object.keys(CONTRACT_ADDRESSES).join(', ')}.\`
+    )
+  }
+  return addrs
+}
+
+const contracts = getContracts()
+
+export const REMITCHAIN_ADDRESS   = contracts.remitChain
+export const ESCROW_VAULT_ADDRESS = contracts.escrowVault
+export const KYC_REGISTRY_ADDRESS = contracts.kycRegistry
+export const TIMELOCK_ADDRESS     = contracts.timelockAddress
+export const QUSD_ADDRESS         = contracts.qusd
+export const FEE_TREASURY_ADDRESS = contracts.feeTreasury
 
 // ─── Contract Config ─────────────────────────────────────────────────────────
 
 /** Fee in basis points (10 = 0.1%) */
-export const FEE_BPS = ${config.initialFeeBps} as const
+export const FEE_BPS = ${feeBps} as const
 
-/** QUSD decimals */
+/** QUSD/QUSDC decimals (6 on both testnet and mainnet) */
 export const QUSD_DECIMALS = 6 as const
+
+/** Whether the app is targeting a production mainnet */
+export const IS_MAINNET = _chainId === 1990
 `
 
   fs.writeFileSync(CONTRACTS_FILE, contractsContent, 'utf-8')

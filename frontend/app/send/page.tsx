@@ -3,7 +3,7 @@
 import { motion, useSpring, useMotionValueEvent, AnimatePresence } from 'motion/react'
 import { useState, useEffect, useCallback } from 'react'
 import { useAccount, useChainId, usePublicClient, useWriteContract } from 'wagmi'
-import { ArrowRight, ChevronDown, CheckCircle2, Loader2, Phone, UserCircle2, AlertCircle, X } from 'lucide-react'
+import { ArrowRight, ChevronDown, CheckCircle2, Loader2, Phone, Mail, UserCircle2, AlertCircle, X } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { encodeAbiParameters, encodePacked, keccak256, parseUnits, toHex } from 'viem'
@@ -38,6 +38,7 @@ export default function SendPage() {
   const searchParams = useSearchParams()
   const [rawInput, setRawInput] = useState('100')
   const [phone, setPhone] = useState(searchParams.get('phone') || '')
+  const [email, setEmail] = useState('')
   const [contact, setContact] = useState<Contact | null>(null)
 
   useEffect(() => {
@@ -216,18 +217,19 @@ export default function SendPage() {
         }),
       }).catch(err => console.warn('[metadata] Failed (non-fatal):', err))
 
-      // 2. Notify recipient via SMS — fire-and-forget
+      // 2. Notify recipient via Email or SMS — fire-and-forget
       fetch('/api/notify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transferId,
           recipientPhone: e164Phone,
+          recipientEmail: email || undefined,
           amount: numericAmount,
           corridor: corridorId,
         }),
       }).then(async r => {
-        if (!r.ok) console.warn('[notify] SMS 400:', await r.json().catch(() => r.text()))
+        if (!r.ok) console.warn('[notify] 400:', await r.json().catch(() => r.text()))
       }).catch(err => console.warn('[notify] Failed (non-fatal):', err))
 
       // 3. In demo mode, persist plaintext OTP so the tracker can surface it on-screen
@@ -402,7 +404,7 @@ export default function SendPage() {
               </div>
             ) : (
               <div
-                className="flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors"
+                className="flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors mb-2"
                 style={{
                   background: 'var(--color-surface)',
                   borderColor: 'var(--color-border)',
@@ -420,6 +422,26 @@ export default function SendPage() {
               />
             </div>
             )}
+
+            {/* Email Input (Optional, for Mainnet Resend notifications) */}
+            <div
+              className="flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors"
+              style={{
+                background: 'var(--color-surface)',
+                borderColor: 'var(--color-border)',
+              }}
+            >
+              <Mail className="w-5 h-5" style={{ color: 'var(--color-text-tertiary)' }} />
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="Recipient Email (for OTP delivery)"
+                className="bg-transparent border-none outline-none w-full text-sm font-medium"
+                style={{ color: 'var(--color-text-primary)' }}
+                disabled={sendState !== 'idle'}
+              />
+            </div>
           </div>
 
           {/* ════ THE LIQUID NUMBER ════ */}

@@ -22,7 +22,11 @@ call_override = false
 
 [rpc_endpoints]
 qie_testnet = "https://rpc1testnet.qie.digital/"
+qie_mainnet = "${QIE_MAINNET_RPC}"
 anvil       = "http://127.0.0.1:8545"
 
 [etherscan]
-qie_testnet = { key = "${QIE_EXPLORER_KEY}", url = "https://testnet.qie.digital/api" }
+# Testnet — Blockscout (any non-empty string is accepted as API key)
+qie_testnet = { key = "${QIE_EXPLORER_KEY}", url = "https://testnet.qie.digital/api", chain = 1983 }
+# Mainnet — Blockscout (same pattern, different URL)
+qie_mainnet = { key = "${QIE_EXPLORER_KEY}", url = "https://mainnet.qie.digital/api", chain = 1990 }

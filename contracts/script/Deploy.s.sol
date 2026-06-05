@@ -159,14 +159,16 @@ contract Deploy is Script {
     }
 
     function _logVerificationCommands() internal view {
+        string memory chain = _chainName();
         console2.log("\n=== Verify Contracts ===");
-        console2.log("forge verify-contract <KYCRegistry_ADDR> src/KYCRegistry.sol:KYCRegistry --chain qie_testnet");
-        console2.log("forge verify-contract <EscrowVault_ADDR> src/EscrowVault.sol:EscrowVault --chain qie_testnet");
-        console2.log("forge verify-contract <RemitChain_ADDR>  src/RemitChain.sol:RemitChain  --chain qie_testnet");
+        console2.log(string.concat("forge verify-contract <KYCRegistry_ADDR> src/KYCRegistry.sol:KYCRegistry --chain ", chain, " --verifier blockscout --verifier-url https://", chain == "qie_mainnet" ? "mainnet" : "testnet", ".qie.digital/api"));
+        console2.log(string.concat("forge verify-contract <EscrowVault_ADDR> src/EscrowVault.sol:EscrowVault --chain ", chain, " --verifier blockscout --verifier-url https://", chain == "qie_mainnet" ? "mainnet" : "testnet", ".qie.digital/api"));
+        console2.log(string.concat("forge verify-contract <RemitChain_ADDR>  src/RemitChain.sol:RemitChain  --chain ", chain, " --verifier blockscout --verifier-url https://", chain == "qie_mainnet" ? "mainnet" : "testnet", ".qie.digital/api"));
     }
 
     function _chainName() internal view returns (string memory) {
         if (block.chainid == 1983) return "qie_testnet";
+        if (block.chainid == 1990) return "qie_mainnet";
         if (block.chainid == 31337) return "anvil";
         return vm.toString(block.chainid);
     }

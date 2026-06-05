@@ -1,6 +1,6 @@
 import { createConfig, http, createStorage, cookieStorage } from 'wagmi'
 import { injected, walletConnect } from 'wagmi/connectors'
-import { qieTestnet } from './chains'
+import { qieTestnet, qieMainnet, activeChain } from './chains'
 import { env } from './env'
 
 // Safely build connectors — WalletConnect can throw if projectId is missing or
@@ -33,12 +33,23 @@ function buildConnectors() {
 const connectors = buildConnectors()
 
 export const wagmiConfig = createConfig({
-  chains: [qieTestnet],
+  // activeChain is resolved from NEXT_PUBLIC_CHAIN_ID at module init time.
+  // Switch environments purely by changing that env var — no code changes needed.
+  chains: [activeChain],
   connectors,
   ssr: true,
   storage: createStorage({ storage: cookieStorage }),
   transports: {
-    [qieTestnet.id]: http(env.NEXT_PUBLIC_RPC_URL),
+    [qieTestnet.id]: http(
+      Number(process.env.NEXT_PUBLIC_CHAIN_ID) === qieTestnet.id
+        ? env.NEXT_PUBLIC_RPC_URL
+        : 'https://rpc1testnet.qie.digital/',
+    ),
+    [qieMainnet.id]: http(
+      Number(process.env.NEXT_PUBLIC_CHAIN_ID) === qieMainnet.id
+        ? env.NEXT_PUBLIC_RPC_URL
+        : 'https://rpc1mainnet.qie.digital/',
+    ),
   },
 })
 
