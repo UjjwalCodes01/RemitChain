@@ -6,6 +6,7 @@ import { RemitChainAbi } from './abis/RemitChain'
 import { EscrowVaultAbi } from './abis/EscrowVault'
 import { KYCRegistryAbi } from './abis/KYCRegistry'
 import { ERC20Abi } from './abis/ERC20'
+import { env } from '@/lib/env'
 
 export { RemitChainAbi, EscrowVaultAbi, KYCRegistryAbi, ERC20Abi }
 
@@ -40,7 +41,7 @@ const CONTRACT_ADDRESSES = {
 
 type SupportedChainId = keyof typeof CONTRACT_ADDRESSES
 
-const _chainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID) as SupportedChainId
+const _chainId = env.NEXT_PUBLIC_CHAIN_ID as SupportedChainId
 
 function getContracts() {
   const addrs = CONTRACT_ADDRESSES[_chainId]
