@@ -1,4 +1,5 @@
 import { defineChain } from 'viem'
+import { env } from '@/lib/env'
 
 export const qieTestnet = defineChain({
   id: 1983,
@@ -43,6 +44,6 @@ export const qieMainnet = defineChain({
 
 /** The chain that is active for this deployment, selected by NEXT_PUBLIC_CHAIN_ID. */
 export const activeChain =
-  Number(process.env.NEXT_PUBLIC_CHAIN_ID) === qieMainnet.id
+  env.NEXT_PUBLIC_CHAIN_ID === qieMainnet.id
     ? qieMainnet
     : qieTestnet

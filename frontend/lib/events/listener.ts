@@ -29,8 +29,10 @@ import { REMITCHAIN_ADDRESS } from '@/lib/contracts'
 
 // ── Chain definition (server-only) ────────────────────────────────────────────
 
-const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL ?? 'https://rpc1testnet.qie.digital/'
-const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? '1983')
+import { env } from '@/lib/env'
+
+const RPC_URL = env.NEXT_PUBLIC_RPC_URL
+const CHAIN_ID = env.NEXT_PUBLIC_CHAIN_ID
 
 export function getPublicClient(): PublicClient {
   return createPublicClient({
