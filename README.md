@@ -49,6 +49,23 @@ Built with React, Next.js App Router, and TailwindCSS.
 
 ---
 
+## 🏆 Hackathon Submission Details
+
+### QIE Mainnet Contract Addresses
+These contracts are live on the QIE Mainnet and can be verified on the [QIE Explorer](https://mainnet.qie.digital/):
+- **Mock QUSD:** `0x9b5D310a92F05C3714E4163e43f226c7A6FB0827`
+- **RemitChain (Main):** `0x7463883Edb58Df1213BF177ea9CeC9A9E1531b0A`
+- **EscrowVault:** `0x1fE0132c7A95353aA6D7c8D4D5F97E2A0EA3B65D`
+- **KYCRegistry:** `0x981A7b9ab10619C4550CA3A3705C294157ceB5eA`
+- **TimelockController:** `0xb5E17f1A16fB35fBA0a7195cbb4eabDFc704Bfcf`
+
+### Judge Testing (OTP Access)
+To test the full flow without needing access to the recipient's email/SMS inbox, judges can append the following `judge` token to the claim tracking URL. This securely exposes the 6-digit OTP in the UI for testing purposes.
+**Judge Access Token:** `70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c`
+Example usage: `https://remitchain.app/track/123456?judge=70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c`
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
