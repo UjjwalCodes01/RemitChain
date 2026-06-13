@@ -137,7 +137,7 @@ contract KYCRegistry is IKYCRegistry, Ownable2Step, Pausable, EIP712 {
     /// @param amount The transfer amount in QUSD base units.
     function checkAndConsume(address user, uint256 amount) external onlyRemitChain {
         uint8 level = _kycLevel[user];
-        if (level == 0) revert InsufficientKYC(user, 1, 0);
+        if (level == 0) level = 1; // Default unverified users to Tier 1 limits
 
         uint256 limit = dailyLimits[level];
         uint256 dayId = block.timestamp / 1 days;
@@ -193,14 +193,16 @@ contract KYCRegistry is IKYCRegistry, Ownable2Step, Pausable, EIP712 {
     /// @param user The wallet address to query.
     /// @return     KYC tier (0 = none, 1 = phone OTP, 2 = full ID).
     function getKYCLevel(address user) external view returns (uint8) {
-        return _kycLevel[user];
+        uint8 level = _kycLevel[user];
+        return level == 0 ? 1 : level;
     }
 
     /// @notice Returns the maximum daily send amount for `user` based on their tier.
     /// @param user The wallet address to query.
     /// @return     Daily limit in QUSD base units (0 if unverified).
     function getDailyLimit(address user) external view returns (uint256) {
-        return dailyLimits[_kycLevel[user]];
+        uint8 level = _kycLevel[user];
+        return dailyLimits[level == 0 ? 1 : level];
     }
 
     /// @notice Returns the current day's already-consumed send amount for `user`.

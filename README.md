@@ -54,10 +54,10 @@ Built with React, Next.js App Router, and TailwindCSS.
 ### QIE Mainnet Contract Addresses
 These contracts are live on the QIE Mainnet and can be verified on the [QIE Explorer](https://mainnet.qie.digital/):
 - **Mock QUSD:** `0x9b5D310a92F05C3714E4163e43f226c7A6FB0827`
-- **RemitChain (Main):** `0xf448dee0cAba9865dC64Caf388669c2F5403b600`
-- **EscrowVault:** `0xaC31Bb31C34CC5341Ff4090F80C1A0407A33e56a`
-- **KYCRegistry:** `0xdc92c815e98f6C291986427513C0d7B9d0b0CAaa`
-- **TimelockController:** `0xC39C38dcdb95A0160a0E909Bf2C72B9746eD4273`
+- **RemitChain (Main):** `0x56c650167e2D3a20A1131bC3b9e23449bC604AEa`
+- **EscrowVault:** `0xbFC6e4dc09a59F9341EfACA72FFfff4ABF2e03FA`
+- **KYCRegistry:** `0xdc38DEf671E9765f0B1a06708681A7bFda16259c`
+- **TimelockController:** `0xbC635C66e6C7b20eb3d3C6E59C776c5b96a84dBB`
 
 ### Judge Testing (OTP Access)
 To test the full flow without needing access to the recipient's email/SMS inbox, judges can append the following `judge` token to the claim tracking URL. This securely exposes the 6-digit OTP in the UI for testing purposes.
