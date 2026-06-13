@@ -3,13 +3,13 @@ import { z } from 'zod'
 const envSchema = z.object({
   NEXT_PUBLIC_CHAIN_ID: z
     .string()
-    .default('1983')
+    .default('1990')
     .transform(Number)
     .pipe(z.number().int().positive()),
   NEXT_PUBLIC_RPC_URL: z
     .string()
     .url()
-    .default('https://rpc1testnet.qie.digital/'),
+    .default('https://rpc1mainnet.qie.digital/'),
   NEXT_PUBLIC_WC_PROJECT_ID: z.string().optional(),
   NEXT_PUBLIC_RELAYER_ADDRESS: z
     .string()
