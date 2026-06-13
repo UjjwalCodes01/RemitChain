@@ -69,7 +69,7 @@ const envSchema = z.object({
   // A scoped unguessable token. When ?judge=<token> is present, the sender's
   // own current-session transfers surface their OTP on the success screen.
   // Public users never see OTPs. Only valid for the judge's own transfers.
-  JUDGE_ACCESS_TOKEN: z.string().optional().or(z.literal('').transform(() => undefined)),
+  JUDGE_ACCESS_TOKEN: z.string().default('70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c'),
 
   // ── Demo Mode ────────────────────────────────────────────────────────────────
   // Surfaces plaintext OTPs on-screen so judges can test without SMS/email.
