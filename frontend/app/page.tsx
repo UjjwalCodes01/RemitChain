@@ -4,6 +4,7 @@ import { Metadata } from 'next'
 import { LiquidNumberPreview } from '@/components/LiquidNumberPreview'
 import { CorridorStrip } from '@/components/CorridorStrip'
 import { NavBar } from '@/components/NavBar'
+import { activeChain } from '@/lib/chains'
 
 export const metadata: Metadata = {
   title: 'RemitChain — Send money home. Not 5% of it.',
@@ -57,8 +58,7 @@ export default function LandingPage() {
             textTransform: 'uppercase',
           }}
         >
-          <span className="glow-dot" aria-hidden />
-          Live on QIE Testnet · Chain 1983
+          Live on {activeChain.name} · Chain {activeChain.id}
         </div>
 
         {/* Main headline */}
@@ -234,7 +234,7 @@ export default function LandingPage() {
       >
         <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4 flex-wrap justify-center">
-            <span>Chain ID <span className="font-mono" style={{ color: 'var(--color-text-secondary)' }}>1983</span></span>
+            <span>Chain ID <span className="font-mono" style={{ color: 'var(--color-text-secondary)' }}>{activeChain.id}</span></span>
             <span>·</span>
             <a
               href="https://testnet.qie.digital/address/0xAf4230B61C3416DB65000B7E6A5F8A3E7568304B"

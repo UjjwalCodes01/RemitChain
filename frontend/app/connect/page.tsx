@@ -10,8 +10,8 @@ import { useChainGuard } from '@/hooks/useChainGuard'
 import { useQUSDBalance } from '@/hooks/useQUSDBalance'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { NavBar } from '@/components/NavBar'
-import { qieTestnet } from '@/lib/chains'
-
+import { activeChain } from '@/lib/chains'
+import { env } from '@/lib/env'
 export default function ConnectPage() {
   const router = useRouter()
   const { address, isConnected } = useAccount()
@@ -113,9 +113,9 @@ export default function ConnectPage() {
                 <p style={{ color: 'var(--color-text-secondary)' }}>
                   You&apos;re connected to chain {chainId}. RemitChain runs on{' '}
                   <strong style={{ color: 'var(--color-text-primary)' }}>
-                    {qieTestnet.name}
+                    {activeChain.name}
                   </strong>{' '}
-                  (chain 1983).
+                  (chain {activeChain.id}).
                 </p>
               </div>
 
@@ -128,9 +128,9 @@ export default function ConnectPage() {
                   color: 'var(--color-ink)',
                   boxShadow: '0 0 40px rgba(61,220,151,0.35)',
                 }}
-                aria-label="Switch to QIE Testnet"
+                aria-label={`Switch to ${activeChain.name}`}
               >
-                {isSwitching ? 'Switching…' : 'Switch to QIE Testnet'}
+                {isSwitching ? 'Switching…' : `Switch to ${activeChain.name}`}
               </button>
             </motion.div>
           </motion.div>
@@ -237,13 +237,13 @@ export default function ConnectPage() {
                     className="text-sm font-medium"
                     style={{ color: 'var(--color-text-primary)' }}
                   >
-                    {qieTestnet.name}
+                    {activeChain.name}
                   </span>
                   <span
                     className="text-xs font-mono"
                     style={{ color: 'var(--color-text-tertiary)' }}
                   >
-                    #{qieTestnet.id}
+                    #{activeChain.id}
                   </span>
                 </div>
               </StatusRow>
@@ -271,7 +271,7 @@ export default function ConnectPage() {
                   className="text-xs font-mono truncate max-w-[160px]"
                   style={{ color: 'var(--color-text-secondary)' }}
                 >
-                  rpc1testnet.qie.digital
+                  {env.NEXT_PUBLIC_RPC_URL.replace('https://', '')}
                 </span>
               </StatusRow>
 

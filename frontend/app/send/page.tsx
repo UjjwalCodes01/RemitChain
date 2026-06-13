@@ -11,6 +11,7 @@ import { NavBar } from '@/components/NavBar'
 import { useChainGuard } from '@/hooks/useChainGuard'
 import { env } from '@/lib/env'
 import { REMITCHAIN_ADDRESS, ESCROW_VAULT_ADDRESS, QUSD_ADDRESS, QUSD_DECIMALS, RemitChainAbi, ERC20Abi } from '@/lib/contracts'
+import { activeChain } from '@/lib/chains'
 import { VoiceInput } from '@/components/VoiceInput'
 import { verifyBiometric, isBiometricRegistered } from '@/lib/biometric/webauthn'
 import { getContact } from '@/lib/contacts/db'
@@ -114,7 +115,7 @@ export default function SendPage() {
     } catch (e) {
       console.error('[send] Failed to read senderNonce:', e)
       setSendState('idle')
-      setSendError('Could not connect to QIE network. Check your connection and that your wallet is on QIE Testnet (chain 1983).')
+      setSendError(`Could not connect to QIE network. Check your connection and that your wallet is on ${activeChain.name} (chain ${activeChain.id}).`)
       return
     }
 
@@ -621,7 +622,7 @@ export default function SendPage() {
                   ? numericAmount < 1
                     ? 'Minimum 1 QUSD required'
                     : wrongChain
-                      ? 'Switch to QIE Testnet first'
+                      ? `Switch to ${activeChain.name} first`
                       : !phone
                         ? 'Enter recipient phone'
                         : 'Enter amount'
