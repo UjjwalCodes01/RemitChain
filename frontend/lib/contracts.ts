@@ -24,8 +24,8 @@ const CONTRACT_ADDRESSES = {
   1990: {
     remitChain:      '0x56c650167e2D3a20A1131bC3b9e23449bC604AEa' as const,
     escrowVault:     '0xbFC6e4dc09a59F9341EfACA72FFfff4ABF2e03FA' as const,
-    kycRegistry:     '0xdc38DEf671E9765f0B1a06708681A7bFda16259c' as const,
-    timelockAddress: '0xbC635C66e6C7b20eb3d3C6E59C776c5b96a84dBB' as const,
+    kycRegistry:     '0xaab80c35136e336f3d0fcf113bd1a092bf206832' as const,
+    timelockAddress: '0xd26dc2efd20622867ef9e2c238047490652511d3' as const,
     qusd:            '0x9b5D310a92F05C3714E4163e43f226c7A6FB0827' as const, // MockQUSD
     feeTreasury:     '0x3660362BeB3A95CE16D981e7D30E1e025E741393' as const,
   },
