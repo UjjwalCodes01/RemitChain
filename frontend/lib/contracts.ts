@@ -22,10 +22,10 @@ const CONTRACT_ADDRESSES = {
   },
   // QIE Mainnet (chainId 1990) — populated after: forge script Deploy.s.sol --rpc-url qie_mainnet --broadcast
   1990: {
-    remitChain:      '0x7463883Edb58Df1213BF177ea9CeC9A9E1531b0A' as const,
-    escrowVault:     '0x1fE0132c7A95353aA6D7c8D4D5F97E2A0EA3B65D' as const,
-    kycRegistry:     '0x981A7b9ab10619C4550CA3A3705C294157ceB5eA' as const,
-    timelockAddress: '0xb5E17f1A16fB35fBA0a7195cbb4eabDFc704Bfcf' as const,
+    remitChain:      '0xf448dee0cAba9865dC64Caf388669c2F5403b600' as const,
+    escrowVault:     '0xaC31Bb31C34CC5341Ff4090F80C1A0407A33e56a' as const,
+    kycRegistry:     '0xdc92c815e98f6C291986427513C0d7B9d0b0CAaa' as const,
+    timelockAddress: '0xC39C38dcdb95A0160a0E909Bf2C72B9746eD4273' as const,
     qusd:            '0x9b5D310a92F05C3714E4163e43f226c7A6FB0827' as const, // MockQUSD
     feeTreasury:     '0x3660362BeB3A95CE16D981e7D30E1e025E741393' as const,
   },
