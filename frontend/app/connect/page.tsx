@@ -204,8 +204,7 @@ export default function ConnectPage() {
               className="text-xs mt-6 max-w-xs"
               style={{ color: 'var(--color-text-tertiary)' }}
             >
-              By connecting you confirm this is a testnet environment.
-              No real funds are at risk.
+              By connecting you agree to the Terms of Service.
             </p>
           </motion.div>
 

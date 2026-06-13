@@ -121,7 +121,7 @@ export default function DashboardPage() {
                 No QUSD yet
               </p>
               <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>
-                Get 100 free testnet QUSD to send your first transfer.
+                Get 100 free QUSD to send your first transfer.
               </p>
             </div>
             <Link href="/faucet"

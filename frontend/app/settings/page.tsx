@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { MobileNavBar } from '@/components/MobileNavBar'
 import { isBiometricRegistered, browserSupportsWebAuthn } from '@/lib/biometric/webauthn'
+import { activeChain } from '@/lib/chains'
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -80,7 +81,7 @@ export default function SettingsPage() {
         </div>
 
         <div className="mt-8 text-center">
-          <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>RemitChain v0.2.0 · QIE Testnet</p>
+          <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>RemitChain v0.2.0 · {activeChain.name}</p>
         </div>
       </main>
 

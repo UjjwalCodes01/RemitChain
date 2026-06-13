@@ -8,6 +8,7 @@ import {
   RefreshCw, Wifi, Shield, Database, Zap
 } from 'lucide-react'
 import Link from 'next/link'
+import { activeChain } from '@/lib/chains'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -201,7 +202,7 @@ export function StatsClient() {
             Live Statistics
           </h1>
           <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-            Phone-number-only payments · 0.1% flat fee · QIE Testnet · Auto-refreshes every 30s
+            Phone-number-only payments · 0.1% flat fee · {activeChain.name} · Auto-refreshes every 30s
           </p>
         </motion.div>
 
@@ -219,7 +220,7 @@ export function StatsClient() {
               />
               <StatCard icon={DollarSign} label="Volume (QUSD)" delay={0.05}
                 value={<AnimatedNumber value={s?.totalVolumeUSDC ?? 0} decimals={2} prefix="$" />}
-                sub="Total sent on testnet"
+                sub={`Total sent on ${activeChain.name}`}
               />
               <StatCard icon={Users} label="Unique Senders" delay={0.1}
                 value={<AnimatedNumber value={s?.uniqueSenders ?? 0} />}
@@ -383,13 +384,13 @@ export function StatsClient() {
             {/* ── Footer ── */}
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
               className="text-center text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-              <p>QIE Testnet · Chain ID 1983 · <a
-                href="https://testnet.qiescan.io"
+              <p>{activeChain.name} · Chain ID {activeChain.id} · <a
+                href={activeChain.blockExplorers.default.url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline"
                 style={{ color: 'var(--color-mint)' }}
-              >View on QIEScan ↗</a></p>
+              >View Explorer ↗</a></p>
               <p className="mt-1">Last updated: {lastRefresh?.toLocaleTimeString() ?? '—'} · Auto-refreshes every 30s</p>
               <div className="mt-4 flex items-center justify-center gap-4">
                 <Link href="/" className="hover:opacity-80 transition-opacity" style={{ color: 'var(--color-mint)' }}>← App</Link>
