@@ -1,4 +1,3 @@
-import { get, set, del, keys, getMany } from 'idb-keyval'
 import type { Contact, NewContact } from './types'
 
 const PREFIX = 'contact:'
@@ -8,6 +7,7 @@ function contactKey(id: string) {
 }
 
 export async function getContacts(): Promise<Contact[]> {
+  const { keys, getMany } = await import('idb-keyval')
   const allKeys = await keys()
   const contactKeys = allKeys.filter(k => typeof k === 'string' && k.startsWith(PREFIX)) as string[]
   const contacts = await getMany(contactKeys)
@@ -22,10 +22,12 @@ export async function getContacts(): Promise<Contact[]> {
 }
 
 export async function getContact(id: string): Promise<Contact | undefined> {
+  const { get } = await import('idb-keyval')
   return get<Contact>(contactKey(id))
 }
 
 export async function upsertContact(contact: Contact): Promise<void> {
+  const { set } = await import('idb-keyval')
   await set(contactKey(contact.id), contact)
 }
 
@@ -40,6 +42,7 @@ export async function createContact(data: NewContact): Promise<Contact> {
 }
 
 export async function deleteContact(id: string): Promise<void> {
+  const { del } = await import('idb-keyval')
   await del(contactKey(id))
 }
 

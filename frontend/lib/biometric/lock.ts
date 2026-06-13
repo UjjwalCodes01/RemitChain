@@ -1,4 +1,3 @@
-import { get, set } from 'idb-keyval'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { isBiometricRegistered, verifyBiometric } from './webauthn'
 
@@ -17,6 +16,7 @@ export function useBiometricLock() {
     lockTimer.current = setTimeout(async () => {
       const registered = await isBiometricRegistered()
       if (registered) {
+        const { set } = await import('idb-keyval')
         await set(LOCK_KEY, true)
         setLockState('locked')
       }
@@ -27,6 +27,7 @@ export function useBiometricLock() {
     const registered = await isBiometricRegistered()
     if (!registered) { setLockState('not_registered'); return }
 
+    const { get } = await import('idb-keyval')
     const locked = await get<boolean>(LOCK_KEY)
     setLockState(locked === true ? 'locked' : 'unlocked')
     if (locked !== true) resetTimer()
@@ -55,6 +56,7 @@ export function useBiometricLock() {
     try {
       const ok = await verifyBiometric()
       if (ok) {
+        const { set } = await import('idb-keyval')
         await set(LOCK_KEY, false)
         setLockState('unlocked')
         resetTimer()
