@@ -9,7 +9,9 @@ function buildConnectors() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const list: any[] = [injected()]
   const wcProjectId = env.NEXT_PUBLIC_WC_PROJECT_ID
-  if (wcProjectId && wcProjectId !== 'your_project_id_here') {
+  // WalletConnect uses indexedDB under the hood, which crashes during Server-Side Rendering.
+  // We must only add it on the client.
+  if (typeof window !== 'undefined' && wcProjectId && wcProjectId !== 'your_project_id_here') {
     try {
       list.push(
         walletConnect({
