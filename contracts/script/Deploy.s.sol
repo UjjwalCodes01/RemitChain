@@ -160,10 +160,11 @@ contract Deploy is Script {
 
     function _logVerificationCommands() internal view {
         string memory chain = _chainName();
+        string memory apiPrefix = block.chainid == 1990 ? "mainnet" : "testnet";
         console2.log("\n=== Verify Contracts ===");
-        console2.log(string.concat("forge verify-contract <KYCRegistry_ADDR> src/KYCRegistry.sol:KYCRegistry --chain ", chain, " --verifier blockscout --verifier-url https://", chain == "qie_mainnet" ? "mainnet" : "testnet", ".qie.digital/api"));
-        console2.log(string.concat("forge verify-contract <EscrowVault_ADDR> src/EscrowVault.sol:EscrowVault --chain ", chain, " --verifier blockscout --verifier-url https://", chain == "qie_mainnet" ? "mainnet" : "testnet", ".qie.digital/api"));
-        console2.log(string.concat("forge verify-contract <RemitChain_ADDR>  src/RemitChain.sol:RemitChain  --chain ", chain, " --verifier blockscout --verifier-url https://", chain == "qie_mainnet" ? "mainnet" : "testnet", ".qie.digital/api"));
+        console2.log(string.concat("forge verify-contract <KYCRegistry_ADDR> src/KYCRegistry.sol:KYCRegistry --chain ", chain, " --verifier blockscout --verifier-url https://", apiPrefix, ".qie.digital/api"));
+        console2.log(string.concat("forge verify-contract <EscrowVault_ADDR> src/EscrowVault.sol:EscrowVault --chain ", chain, " --verifier blockscout --verifier-url https://", apiPrefix, ".qie.digital/api"));
+        console2.log(string.concat("forge verify-contract <RemitChain_ADDR>  src/RemitChain.sol:RemitChain  --chain ", chain, " --verifier blockscout --verifier-url https://", apiPrefix, ".qie.digital/api"));
     }
 
     function _chainName() internal view returns (string memory) {
