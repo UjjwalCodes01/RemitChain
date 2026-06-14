@@ -68,18 +68,11 @@ export async function notifyRecipient(payload: NotifyPayload): Promise<NotifyRes
   }
 }
 
-// ── Email via Resend ──────────────────────────────────────────────────────────
+// ── Email via Gmail SMTP (primary) → Resend (fallback) ───────────────────────
 
 async function sendOtpEmail(payload: NotifyPayload): Promise<NotifyResult> {
   const { to, otp, amount, claimUrl, senderName, locale = 'en', transferId } = payload
   const { RESEND_API_KEY, RESEND_FROM } = env
-
-  // Stub when Resend is not configured — useful for local dev
-  if (!RESEND_API_KEY) {
-    console.log(`[EMAIL-STUB] To: ${to} | Transfer: ${transferId.slice(0, 10)}… | OTP: [REDACTED]`)
-    console.log(`[EMAIL-STUB] Claim URL: ${claimUrl}`)
-    return { channel: 'email', success: true }
-  }
 
   const templateData: EmailTemplateData = {
     otp,
@@ -90,10 +83,46 @@ async function sendOtpEmail(payload: NotifyPayload): Promise<NotifyResult> {
     locale,
   }
 
-  const fromAddress = RESEND_FROM || 'RemitChain <onboarding@resend.dev>'
   const subject = getEmailSubject(amount, locale)
   const html = buildOtpEmailHtml(templateData)
   const text = buildOtpEmailPlaintext(templateData)
+
+  // ── 1. Try Gmail SMTP via Nodemailer (sends to ANY address, no sandbox) ──
+  const gmailUser = process.env.GMAIL_USER
+  const gmailPass = process.env.GMAIL_APP_PASSWORD
+
+  if (gmailUser && gmailPass) {
+    try {
+      // Dynamic import keeps nodemailer server-side only
+      const nodemailer = await import('nodemailer')
+      const transporter = nodemailer.default.createTransport({
+        service: 'gmail',
+        auth: { user: gmailUser, pass: gmailPass },
+      })
+      const info = await transporter.sendMail({
+        from: `"RemitChain" <${gmailUser}>`,
+        to,
+        subject,
+        html,
+        text,
+      })
+      console.log(`[EMAIL/GMAIL] Sent for transfer ${transferId.slice(0, 10)}… | id=${info.messageId}`)
+      return { channel: 'email', success: true, messageId: info.messageId }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      console.error(`[EMAIL/GMAIL] Failed, will try Resend fallback:`, error)
+      // fall through to Resend
+    }
+  }
+
+  // ── 2. Resend fallback (only works to verified email on free tier) ────────
+  if (!RESEND_API_KEY) {
+    console.log(`[EMAIL-STUB] To: ${to} | Transfer: ${transferId.slice(0, 10)}… | OTP: [REDACTED]`)
+    console.log(`[EMAIL-STUB] Claim URL: ${claimUrl}`)
+    return { channel: 'email', success: true }
+  }
+
+  const fromAddress = RESEND_FROM || 'RemitChain <onboarding@resend.dev>'
 
   try {
     const res = await fetch('https://api.resend.com/emails', {
@@ -118,20 +147,21 @@ async function sendOtpEmail(payload: NotifyPayload): Promise<NotifyResult> {
     if (!res.ok) {
       const body = await res.text()
       const error = `Resend ${res.status}: ${body.slice(0, 300)}`
-      console.error(`[EMAIL] Failed for transfer ${transferId.slice(0, 10)}…:`, error)
+      console.error(`[EMAIL/RESEND] Failed for transfer ${transferId.slice(0, 10)}…:`, error)
       return { channel: 'email', success: false, error }
     }
 
     const data = await res.json() as { id?: string }
-    console.log(`[EMAIL] Sent for transfer ${transferId.slice(0, 10)}… | id=${data.id}`)
+    console.log(`[EMAIL/RESEND] Sent for transfer ${transferId.slice(0, 10)}… | id=${data.id}`)
     return { channel: 'email', success: true, messageId: data.id }
 
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
-    console.error(`[EMAIL] Network error for ${transferId.slice(0, 10)}…:`, error)
+    console.error(`[EMAIL/RESEND] Network error for ${transferId.slice(0, 10)}…:`, error)
     return { channel: 'email', success: false, error }
   }
 }
+
 
 // ── SMS via Twilio (backward compat) ─────────────────────────────────────────
 
