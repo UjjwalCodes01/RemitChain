@@ -226,8 +226,10 @@ export default function SendPage() {
           transferId,
           recipientPhone: e164Phone,
           recipientEmail: email || undefined,
+          otp: generatedOtp,
           amount: numericAmount,
           corridor: corridorId,
+          senderName: 'Sender', // optional, could use sender's real name if we had it
         }),
       }).then(async r => {
         if (!r.ok) console.warn('[notify] 400:', await r.json().catch(() => r.text()))
