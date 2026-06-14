@@ -237,7 +237,7 @@ export default function LandingPage() {
             <span>Chain ID <span className="font-mono" style={{ color: 'var(--color-text-secondary)' }}>{activeChain.id}</span></span>
             <span>·</span>
             <a
-              href="https://testnet.qie.digital/address/0xAf4230B61C3416DB65000B7E6A5F8A3E7568304B"
+              href="https://mainnet.qie.digital/address/0x56c650167e2D3a20A1131bC3b9e23449bC604AEa"
               target="_blank"
               rel="noopener noreferrer"
               className="font-mono hover:text-[var(--color-mint)] transition-colors"
@@ -247,7 +247,7 @@ export default function LandingPage() {
             </a>
             <span>·</span>
             <a
-              href="https://testnet.qie.digital/address/0xB388C8cdF22Bd89F0110620A0B557baA5d9D6eF1"
+              href="https://mainnet.qie.digital/address/0xaab80c35136e336f3d0fcf113bd1a092bf206832"
               target="_blank"
               rel="noopener noreferrer"
               className="font-mono hover:text-[var(--color-mint)] transition-colors"

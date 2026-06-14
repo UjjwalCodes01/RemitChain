@@ -91,7 +91,7 @@
   "errors": {
     "generic": "कुछ गलत हो गया। कृपया पुनः प्रयास करें।",
     "network": "इंटरनेट कनेक्शन नहीं।",
-    "wrongChain": "कृपया QIE Testnet (Chain 1983) पर स्विच करें।",
+    "wrongChain": "कृपया QIE Mainnet (Chain 1990) पर स्विच करें।",
     "insufficientBalance": "QUSD बैलेंस अपर्याप्त है।",
     "transferExpired": "यह ट्रांसफर समाप्त हो गया।",
     "invalidOtp": "गलत OTP।"

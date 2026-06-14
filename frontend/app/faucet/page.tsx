@@ -100,7 +100,7 @@ export default function FaucetPage() {
                   It&apos;ll appear in your wallet in ~10 seconds.
                 </p>
                 {txHash && (
-                  <a href={`https://testnet.qiescan.io/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
+                  <a href={`https://mainnet.qiescan.io/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
                     className="flex items-center justify-center gap-1.5 text-xs mb-4"
                     style={{ color: 'var(--color-mint)' }}>
                     View on QIEScan <ExternalLink className="w-3 h-3" />
@@ -217,7 +217,7 @@ export default function FaucetPage() {
                 </button>
 
                 <p className="text-xs mt-4" style={{ color: 'var(--color-text-tertiary)' }}>
-                  QIE Testnet only. These tokens have no monetary value.
+                  Built on QIE Mainnet. QUSD is a demo stablecoin for the hackathon.
                 </p>
               </motion.div>
             )}

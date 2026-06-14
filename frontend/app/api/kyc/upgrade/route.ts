@@ -17,17 +17,13 @@ import { createPublicClient, createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { env } from '@/lib/env'
 import { KYC_REGISTRY_ADDRESS, KYCRegistryAbi } from '@/lib/contracts'
+import { serverChain } from '@/lib/chain-config'
 
 const upgradeSchema = z.object({
   userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Must be a valid EVM address'),
 })
 
-const chain = {
-  id: Number(env.NEXT_PUBLIC_CHAIN_ID),
-  name: 'QIE Testnet',
-  nativeCurrency: { name: 'QIE', symbol: 'QIE', decimals: 18 },
-  rpcUrls: { default: { http: [env.NEXT_PUBLIC_RPC_URL] } },
-}
+
 
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -48,8 +44,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const account = privateKeyToAccount(env.RELAYER_PRIVATE_KEY as `0x${string}`)
-    const publicClient = createPublicClient({ chain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
-    const walletClient = createWalletClient({ account, chain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
+    const publicClient = createPublicClient({ chain: serverChain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
+    const walletClient = createWalletClient({ account, chain: serverChain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
 
     // Read user's current KYC level — don't downgrade
     const currentLevel = await publicClient.readContract({
@@ -79,7 +75,7 @@ export async function POST(req: NextRequest) {
       domain: {
         name: 'KYCRegistry',
         version: '1',
-        chainId: chain.id,
+        chainId: serverChain.id,
         verifyingContract: KYC_REGISTRY_ADDRESS,
       },
       types: {

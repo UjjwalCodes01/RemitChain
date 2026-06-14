@@ -34,12 +34,7 @@ const ERC20TransferAbi = [
   },
 ] as const
 
-const qieTestnet = {
-  id: Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? '1983'),
-  name: 'QIE Testnet',
-  nativeCurrency: { name: 'QIE', symbol: 'QIE', decimals: 18 },
-  rpcUrls: { default: { http: [process.env.NEXT_PUBLIC_RPC_URL ?? 'https://rpc1testnet.qie.digital/'] } },
-} as const
+import { serverChain, RPC_URL } from '@/lib/chain-config'
 
 const DRIP_AMOUNT = parseUnits('100', 6) // 100 QUSD
 const COOLDOWN_SECONDS = 24 * 60 * 60   // 24 hours
@@ -90,8 +85,8 @@ export async function POST(req: NextRequest) {
   }
 
   const account = privateKeyToAccount(pk)
-  const walletClient = createWalletClient({ account, chain: qieTestnet, transport: http() })
-  const publicClient = createPublicClient({ chain: qieTestnet, transport: http() })
+  const walletClient = createWalletClient({ account, chain: serverChain, transport: http(RPC_URL) })
+  const publicClient = createPublicClient({ chain: serverChain, transport: http(RPC_URL) })
 
   // Check relayer QUSD balance
   try {

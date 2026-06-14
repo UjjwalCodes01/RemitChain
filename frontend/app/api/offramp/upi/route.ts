@@ -22,15 +22,10 @@ import { eq } from 'drizzle-orm'
 import { createPublicClient, http } from 'viem'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
 import { db, transfers } from '@/lib/db'
+import { serverChain } from '@/lib/chain-config'
 
 // ── Chain for on-chain status check ──────────────────────────────────────────
 
-const qieChain = {
-  id: Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? '1983'),
-  name: 'QIE Testnet',
-  nativeCurrency: { name: 'QIE', symbol: 'QIE', decimals: 18 },
-  rpcUrls: { default: { http: [process.env.NEXT_PUBLIC_RPC_URL ?? 'https://rpc1testnet.qie.digital/'] } },
-} as const
 
 // ── Input schema ──────────────────────────────────────────────────────────────
 
@@ -140,7 +135,7 @@ export async function POST(req: NextRequest) {
   const { transferId, upiId, recipientName = 'Recipient' } = parsed.data
 
   // 1. CRITICAL: verify on-chain status is CLAIMED before any payout
-  const publicClient = createPublicClient({ chain: qieChain, transport: http() })
+  const publicClient = createPublicClient({ chain: serverChain, transport: http() })
   let onChainStatus: number
   try {
     const transfer = await publicClient.readContract({

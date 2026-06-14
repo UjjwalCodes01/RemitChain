@@ -18,13 +18,8 @@ import { eq } from 'drizzle-orm'
 import { createPublicClient, http } from 'viem'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
 import { db, transfers } from '@/lib/db'
+import { serverChain } from '@/lib/chain-config'
 
-const qieChain = {
-  id: Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? '1983'),
-  name: 'QIE Testnet',
-  nativeCurrency: { name: 'QIE', symbol: 'QIE', decimals: 18 },
-  rpcUrls: { default: { http: [process.env.NEXT_PUBLIC_RPC_URL ?? 'https://rpc1testnet.qie.digital/'] } },
-} as const
 
 const gcashSchema = z.object({
   transferId: z.string().regex(/^0x[a-fA-F0-9]{64}$/),
@@ -48,7 +43,7 @@ export async function POST(req: NextRequest) {
   const { transferId, gcashNumber, recipientName } = parsed.data
 
   // 1. On-chain claimed guard (same as UPI — never pay unclaimed)
-  const publicClient = createPublicClient({ chain: qieChain, transport: http() })
+  const publicClient = createPublicClient({ chain: serverChain, transport: http() })
   try {
     const transfer = await publicClient.readContract({
       address: REMITCHAIN_ADDRESS,

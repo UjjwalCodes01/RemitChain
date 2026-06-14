@@ -15,13 +15,8 @@ import { eq } from 'drizzle-orm'
 import { createPublicClient, http } from 'viem'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
 import { db, transfers } from '@/lib/db'
+import { serverChain } from '@/lib/chain-config'
 
-const qieChain = {
-  id: Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? '1983'),
-  name: 'QIE Testnet',
-  nativeCurrency: { name: 'QIE', symbol: 'QIE', decimals: 18 },
-  rpcUrls: { default: { http: [process.env.NEXT_PUBLIC_RPC_URL ?? 'https://rpc1testnet.qie.digital/'] } },
-} as const
 
 export const dynamic = 'force-dynamic'
 
@@ -41,7 +36,7 @@ export async function GET(
     db
       ? db.select().from(transfers).where(eq(transfers.id, transferId)).limit(1)
       : Promise.resolve([]),
-    createPublicClient({ chain: qieChain, transport: http() }).readContract({
+    createPublicClient({ chain: serverChain, transport: http() }).readContract({
       address: REMITCHAIN_ADDRESS,
       abi: RemitChainAbi,
       functionName: 'getTransfer',

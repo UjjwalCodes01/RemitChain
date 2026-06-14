@@ -91,7 +91,7 @@
   "errors": {
     "generic": "Something went wrong. Please try again.",
     "network": "No internet connection.",
-    "wrongChain": "Please switch to QIE Testnet (Chain 1983).",
+    "wrongChain": "Please switch to QIE Mainnet (Chain 1990).",
     "insufficientBalance": "Insufficient QUSD balance.",
     "transferExpired": "This transfer has expired.",
     "invalidOtp": "Invalid OTP."

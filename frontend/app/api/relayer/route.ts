@@ -10,13 +10,8 @@ const requestSchema = z.object({
   otp: z.string().regex(/^\d{6}$/, 'OTP must be exactly 6 digits'),
 })
 
-// Hardcoded for demo/hackathon (QIE Testnet)
-const chain = {
-  id: Number(env.NEXT_PUBLIC_CHAIN_ID),
-  name: 'QIE Testnet',
-  nativeCurrency: { name: 'QIE', symbol: 'QIE', decimals: 18 },
-  rpcUrls: { default: { http: [env.NEXT_PUBLIC_RPC_URL] } },
-}
+import { serverChain } from '@/lib/chain-config'
+
 
 export async function POST(req: NextRequest) {
   try {
@@ -47,8 +42,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
     }
 
-    const publicClient = createPublicClient({ chain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
-    const walletClient = createWalletClient({ account, chain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
+    const publicClient = createPublicClient({ chain: serverChain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
+    const walletClient = createWalletClient({ account, chain: serverChain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
 
     // 1. Fetch Transfer Status
     const transfer = await publicClient.readContract({
@@ -81,7 +76,7 @@ export async function POST(req: NextRequest) {
       domain: {
         name: 'RemitChain',
         version: '1',
-        chainId: chain.id,
+        chainId: serverChain.id,
         verifyingContract: REMITCHAIN_ADDRESS,
       },
       types: {

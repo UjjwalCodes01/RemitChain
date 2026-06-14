@@ -29,7 +29,7 @@ const ERROR_MAP: Record<string, string> = {
   'User rejected': 'Transaction cancelled.',
   'user denied': 'Transaction cancelled.',
   'User denied': 'Transaction cancelled.',
-  'chain mismatch': 'Please switch to QIE Testnet.',
+  'chain mismatch': 'Please switch to QIE Mainnet.',
   CALL_EXCEPTION: 'The transaction was rejected by the contract.',
   INSUFFICIENT_FUNDS: 'Not enough QIE to cover gas.',
 }
