@@ -21,7 +21,7 @@ export default function ClaimPage() {
 
   const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState(['', '', '', '', '', ''])
-  const [claimState, setClaimState] = useState<'idle' | 'submitting' | 'success' | 'error' | 'locked'>('idle')
+  const [claimState, setClaimState] = useState<'idle' | 'submitting' | 'success' | 'idempotent' | 'error' | 'locked'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const [retryAfterMs, setRetryAfterMs] = useState(0)
   const [countdown, setCountdown] = useState(0)
@@ -140,7 +140,12 @@ export default function ClaimPage() {
         throw new Error(friendly)
       }
 
-      setClaimState('success')
+      // idempotent = already claimed on-chain before this session
+      if (data.idempotent) {
+        setClaimState('idempotent')
+      } else {
+        setClaimState('success')
+      }
       if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([30, 50, 30])
     } catch (err: unknown) {
       console.error(err)
@@ -173,7 +178,7 @@ export default function ClaimPage() {
               <h1 className="text-xl font-bold mb-2">Transfer Not Found</h1>
               <p style={{ color: 'var(--color-text-secondary)' }}>The link may be broken or the transfer ID is invalid.</p>
             </div>
-          ) : status === 1 || claimState === 'success' ? (
+          ) : claimState === 'success' ? (
             <motion.div
               className="p-8 rounded-2xl border"
               style={{ background: 'var(--color-surface)', borderColor: 'var(--color-mint-glow)' }}
@@ -184,7 +189,7 @@ export default function ClaimPage() {
                    style={{ background: 'var(--color-mint-dim)', color: 'var(--color-mint)' }}>
                 <CheckCircle2 className="w-8 h-8" />
               </div>
-              <h1 className="text-2xl font-bold mb-2">Claim Successful</h1>
+              <h1 className="text-2xl font-bold mb-2">Claim Successful! 🎉</h1>
               <p className="text-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>
                 The funds have been released and are on their way to your local account.
               </p>
@@ -194,6 +199,29 @@ export default function ClaimPage() {
                 style={{ background: 'var(--color-mint)', color: 'var(--color-ink)' }}
               >
                 Done
+              </Link>
+            </motion.div>
+          ) : claimState === 'idempotent' || status === 1 ? (
+            <motion.div
+              className="p-8 rounded-2xl border"
+              style={{ background: 'var(--color-surface)', borderColor: 'var(--color-mint-glow)' }}
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+            >
+              <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6"
+                   style={{ background: 'var(--color-mint-dim)', color: 'var(--color-mint)' }}>
+                <CheckCircle2 className="w-8 h-8" />
+              </div>
+              <h1 className="text-2xl font-bold mb-2">Already Claimed</h1>
+              <p className="text-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>
+                This transfer has already been claimed. The funds were released successfully.
+              </p>
+              <Link
+                href="/"
+                className="inline-flex h-12 px-6 items-center justify-center rounded-xl font-semibold transition-colors w-full"
+                style={{ background: 'var(--color-surface-elevated)', color: 'var(--color-text-primary)' }}
+              >
+                Back to RemitChain
               </Link>
             </motion.div>
           ) : status === 2 || (transfer && Number(transfer.expiry) > 0 && Date.now() / 1000 > Number(transfer.expiry)) ? (

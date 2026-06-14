@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/poll-events",
-      "schedule": "0 0 * * *"
+      "schedule": "* * * * *"
     },
     {
       "path": "/api/cron/recurring",
