@@ -19,8 +19,8 @@ function buildConnectors() {
           metadata: {
             name: 'RemitChain',
             description: 'Pay anyone, anywhere, by phone number. Near-zero fees.',
-            url: typeof window !== 'undefined' ? window.location.origin : 'https://remitchain.app',
-            icons: ['https://remitchain.app/icons/icon-192.png'],
+            url: typeof window !== 'undefined' ? window.location.origin : 'https://remit-chain.vercel.app',
+            icons: ['https://remit-chain.vercel.app/icons/icon-192.png'],
           },
           showQrModal: true,
         }),

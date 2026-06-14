@@ -32,7 +32,7 @@ export const metadata: Metadata = {
     'Phone-number-only cross-border remittance on QIE blockchain. 0.1% fee, QUSD escrow, OTP claim. No wallet, no seed phrase for recipients.',
   keywords: ['remittance', 'cross-border', 'QIE', 'blockchain', 'QUSD', 'migrant workers'],
   authors: [{ name: 'RemitChain' }],
-  metadataBase: new URL('https://remitchain.app'),
+  metadataBase: new URL('https://remit-chain.vercel.app'),
   openGraph: {
     title: 'RemitChain — Send money home. Not 5% of it.',
     description: '0.1% fee cross-border remittance on QIE blockchain.',

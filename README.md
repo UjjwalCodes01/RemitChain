@@ -6,6 +6,9 @@
     Phone-number-only cross-border remittance powered by the QIE Blockchain. <br/>
     0.1% flat fee. No wallet needed for recipients.
   </p>
+  <p>
+    🚀 <strong><a href="https://remit-chain.vercel.app">remit-chain.vercel.app</a></strong>
+  </p>
 </div>
 
 ---
@@ -62,7 +65,7 @@ These contracts are live on the QIE Mainnet and can be verified on the [QIE Expl
 ### Judge Testing (OTP Access)
 To test the full flow without needing access to the recipient's email/SMS inbox, judges can append the following `judge` token to the claim tracking URL. This securely exposes the 6-digit OTP in the UI for testing purposes.
 **Judge Access Token:** `70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c`
-Example usage: `https://remitchain.app/track/123456?judge=70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c`
+Example usage: `https://remit-chain.vercel.app/track/123456?judge=70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c`
 
 ---
 
