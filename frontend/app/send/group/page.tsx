@@ -8,6 +8,7 @@ import { useAccount, useSignTypedData } from 'wagmi'
 import { REMITCHAIN_ADDRESS } from '@/lib/contracts'
 import { QUSD_ADDRESS } from '@/lib/contracts'
 import { keccak256, toBytes, parseUnits } from 'viem'
+import { activeChain } from '@/lib/chains'
 
 export default function GroupSendPage() {
   const router = useRouter()
@@ -50,7 +51,7 @@ export default function GroupSendPage() {
         
         // 1. Sign permit
         const signature = await signTypedDataAsync({
-          domain: { name: 'QUSD', version: '1', chainId: 1983, verifyingContract: QUSD_ADDRESS },
+          domain: { name: 'QUSD', version: '1', chainId: activeChain.id, verifyingContract: QUSD_ADDRESS },
           types: {
             Permit: [
               { name: 'owner', type: 'address' },
