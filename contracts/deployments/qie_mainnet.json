@@ -1,19 +1,19 @@
 {
   "network": "qie_mainnet",
   "chainId": 1990,
-  "deployer": "0x9af20727B5d085245a15BaD82CE7A4f73260296E",
+  "deployer": "0x8E1Ea95ecfa447F034bF47f325cb98d7F703a9AC",
   "contracts": {
-    "TimelockController": "0x777658cF455a5D71de4fb61712EE4967cd49BC02",
-    "KYCRegistry": "0xF050a0cE0CA1d9f375257aAdd3C24F9C4AAC22C9",
-    "EscrowVault": "0x5F91055dbc48de018C9EDF6d8f5cD6a2A36e0c26",
-    "RemitChain": "0xc1D5D2D19de59e7bd818d0445cc6fD115B9bF0c2"
+    "TimelockController": "0xD26Dc2EFD20622867EF9e2C238047490652511D3",
+    "KYCRegistry": "0xaab80c35136e336F3D0fCf113bD1A092Bf206832",
+    "EscrowVault": "0xbFC6e4dc09a59F9341EfACA72FFfff4ABF2e03FA",
+    "RemitChain": "0x56c650167e2D3a20A1131bC3b9e23449bC604AEa"
   },
   "config": {
     "timelockMinDelay": 172800,
     "initialFeeBps": 10,
     "multisig": "0x3660362BeB3A95CE16D981e7D30E1e025E741393",
-    "passOracle": "0x3660362BeB3A95CE16D981e7D30E1e025E741393",
-    "qusd": "0x9af20727B5d085245a15BaD82CE7A4f73260296E",
+    "passOracle": "0x8E1Ea95ecfa447F034bF47f325cb98d7F703a9AC",
+    "qusd": "0x9b5D310a92F05C3714E4163e43f226c7A6FB0827",
     "feeTreasury": "0x3660362BeB3A95CE16D981e7D30E1e025E741393"
   }
 }

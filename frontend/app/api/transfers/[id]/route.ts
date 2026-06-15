@@ -52,10 +52,14 @@ export async function GET(
   ])
 
   const dbRow = dbRows.status === 'fulfilled' ? dbRows.value[0] ?? null : null
-  const chainTransfer = onChain.status === 'fulfilled' ? onChain.value as { status: number; amount: bigint; expiry: bigint; sender: string; recipientPhoneHash: string } : null
+  let chainTransfer = onChain.status === 'fulfilled' ? onChain.value as { status: number; amount: bigint; expiry: bigint; sender: string; recipientPhoneHash: string } : null
 
-  if (!dbRow && !chainTransfer) {
-    return NextResponse.json({ error: 'Transfer not found' }, { status: 404 })
+  if (chainTransfer && (chainTransfer.sender === '0x0000000000000000000000000000000000000000' || chainTransfer.status === 0)) {
+    chainTransfer = null
+  }
+
+  if (!chainTransfer) {
+    return NextResponse.json({ error: 'Transfer not found on the configured network' }, { status: 404 })
   }
 
   // Merge: chain is authoritative for financial fields

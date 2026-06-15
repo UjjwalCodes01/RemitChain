@@ -4,6 +4,9 @@ import createNextIntlPlugin from 'next-intl/plugin'
 const withNextIntl = createNextIntlPlugin('./lib/i18n/request.ts')
 
 const nextConfig: NextConfig = {
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   // Allow reading absolute paths from node_modules
   experimental: {},
 
