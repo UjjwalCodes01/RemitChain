@@ -123,7 +123,7 @@ async function getDbTxHash(transferId: string): Promise<string | null> {
     .where(eq(transfers.id, transferId))
     .limit(1)
   const row = rows[0]
-  if (row?.status === 1 && row.txHash) return row.txHash
+  if (row?.status === 2 && row.txHash) return row.txHash
   return null
 }
 
@@ -239,15 +239,15 @@ export async function POST(req: NextRequest) {
 
   log('info', 'claim.transfer_fetched', { status: transfer.status })
 
-  // 6. Idempotency — already CLAIMED on-chain → return cached txHash from DB
-  if (transfer.status === 1) {
+  // 6. Idempotency — already CLAIMED on-chain (status=2) → return cached txHash from DB
+  if (transfer.status === 2) {
     const cachedTxHash = await getDbTxHash(transferId)
     log('info', 'claim.idempotent', { transferId: transferId.slice(0, 10) + '…' })
     return NextResponse.json({ success: true, idempotent: true, txHash: cachedTxHash })
   }
 
-  // 7. Guard: must be PENDING (0)
-  if (transfer.status !== 0) {
+  // 7. Guard: must be PENDING (status=1). NONE=0 means not found; CANCELLED=3 is terminal.
+  if (transfer.status !== 1) {
     log('warn', 'claim.not_pending', { status: transfer.status })
     return NextResponse.json({ error: 'Transfer is not in a claimable state' }, { status: 400 })
   }

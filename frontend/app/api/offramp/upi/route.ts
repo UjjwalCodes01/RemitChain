@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
     }) as { status: number; amount: bigint }
     onChainStatus = transfer.status
 
-    if (onChainStatus !== 1) {
+    if (onChainStatus !== 2) {
       return NextResponse.json(
         { error: 'Transfer is not claimed on-chain. Cannot pay out unclaimed transfer.' },
         { status: 400 },

@@ -81,10 +81,9 @@ export default function TransferTrackerPage() {
   // Derive stage from transfer status
   useEffect(() => {
     if (!transfer) return
-    if (transfer.status === 1) {
+    if (transfer.status === 2) {        // CLAIMED
       setCurrentStage('claimed')
-    } else if (transfer.status === 0) {
-      // PENDING — advance through sent → confirmed → notified based on elapsed time since page mount
+    } else if (transfer.status === 1) { // PENDING
       const ageMs = Date.now() - mountTime.current
       if (ageMs > 30_000) setCurrentStage('notified')
       else if (ageMs > 12_000) setCurrentStage('confirmed')

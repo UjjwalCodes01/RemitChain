@@ -67,7 +67,7 @@ export default function ClaimPage() {
     }
   })
 
-  const status = transfer?.status
+  const status = transfer ? Number(transfer.status) : undefined
 
   // Handle OTP Input
   const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -201,7 +201,7 @@ export default function ClaimPage() {
                 Done
               </Link>
             </motion.div>
-          ) : claimState === 'idempotent' || status === 1 ? (
+          ) : claimState === 'idempotent' || status === 2 ? (
             <motion.div
               className="p-8 rounded-2xl border"
               style={{ background: 'var(--color-surface)', borderColor: 'var(--color-mint-glow)' }}
@@ -224,7 +224,7 @@ export default function ClaimPage() {
                 Back to RemitChain
               </Link>
             </motion.div>
-          ) : status === 2 || (transfer && Number(transfer.expiry) > 0 && Date.now() / 1000 > Number(transfer.expiry)) ? (
+          ) : status === 3 || (transfer && Number(transfer.expiry) > 0 && Date.now() / 1000 > Number(transfer.expiry)) ? (
             <motion.div
               className="p-8 rounded-2xl border text-center"
               style={{ background: 'var(--color-surface)', borderColor: 'rgba(255,107,92,0.25)' }}

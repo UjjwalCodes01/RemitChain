@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
       args: [transferIdHex],
     })
 
-    if (transfer.status !== 0) { // 0 = PENDING
+    if (transfer.status !== 1) { // 1 = PENDING on-chain
       return NextResponse.json({ error: 'Transfer is not pending' }, { status: 400 })
     }
 

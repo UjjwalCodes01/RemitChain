@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
       args: [transferId as `0x${string}`],
     }) as { status: number }
 
-    if (transfer.status !== 1) {
+    if (transfer.status !== 2) {
       return NextResponse.json(
         { error: 'Transfer is not claimed on-chain. Cannot pay out unclaimed transfer.' },
         { status: 400 },

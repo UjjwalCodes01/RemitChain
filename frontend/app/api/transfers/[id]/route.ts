@@ -20,6 +20,13 @@ import { serverChain } from '@/lib/chain-config'
 
 export const dynamic = 'force-dynamic'
 
+function mapChainStatusToDb(chainStatus: number): number {
+  if (chainStatus === 1) return 0 // PENDING
+  if (chainStatus === 2) return 1 // CLAIMED
+  if (chainStatus === 3) return 2 // CANCELLED
+  return 0
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -45,19 +52,21 @@ export async function GET(
   ])
 
   const dbRow = dbRows.status === 'fulfilled' ? dbRows.value[0] ?? null : null
-  const chainTransfer = onChain.status === 'fulfilled' ? onChain.value : null
+  const chainTransfer = onChain.status === 'fulfilled' ? onChain.value as { status: number; amount: bigint; expiry: bigint; sender: string; recipientPhoneHash: string } : null
 
   if (!dbRow && !chainTransfer) {
     return NextResponse.json({ error: 'Transfer not found' }, { status: 404 })
   }
 
   // Merge: chain is authoritative for financial fields
+  const mergedStatus = chainTransfer !== null ? mapChainStatusToDb(chainTransfer.status) : (dbRow?.status ?? 0)
+
   const merged = {
     id: transferId,
     // Chain fields (authoritative)
-    status: (chainTransfer as { status?: number } | null)?.status ?? dbRow?.status ?? 0,
-    amount: ((chainTransfer as { amount?: bigint } | null)?.amount ?? BigInt(dbRow?.amount ?? '0')).toString(),
-    expiry: ((chainTransfer as { expiry?: bigint } | null)?.expiry ?? BigInt(dbRow?.expiry ?? '0')).toString(),
+    status: mergedStatus,
+    amount: (chainTransfer?.amount ?? BigInt(dbRow?.amount ?? '0')).toString(),
+    expiry: (chainTransfer?.expiry ?? BigInt(dbRow?.expiry ?? '0')).toString(),
     sender: (chainTransfer as { sender?: string } | null)?.sender ?? dbRow?.senderAddress ?? null,
     recipientPhoneHash: (chainTransfer as { recipientPhoneHash?: string } | null)?.recipientPhoneHash ?? dbRow?.recipientPhoneHash ?? null,
     // DB fields (off-chain metadata)
