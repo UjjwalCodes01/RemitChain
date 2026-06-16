@@ -189,7 +189,7 @@ export async function POST(req: NextRequest) {
   const keyId = process.env.RAZORPAY_KEY_ID
   const keySecret = process.env.RAZORPAY_KEY_SECRET
 
-  if (!keyId || !keySecret) {
+  if (!keyId || !keySecret || keyId.startsWith('rzp_test_')) {
     // Sandbox stub — realistic response, full DB update
     const stubId = `rp_stub_${Date.now()}_${transferId.slice(2, 8)}`
 

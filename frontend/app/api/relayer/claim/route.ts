@@ -487,8 +487,9 @@ export async function POST(req: NextRequest) {
     const keySecret = process.env.RAZORPAY_KEY_SECRET
     const amountPaise = Math.round((Number(transfer.amount) / 1000000) * 83.45 * 100)
 
-    if (!keyId || !keySecret) {
+    if (!keyId || !keySecret || keyId.startsWith('rzp_test_')) {
       offrampReference = `rp_stub_${Date.now()}_${transferId.slice(2, 8)}`
+      offrampStatus = 'COMPLETED'
       log('info', 'claim.offramp_upi_stub', { amountPaise, payoutIdClean })
     } else {
       try {
