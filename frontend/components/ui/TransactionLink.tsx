@@ -6,7 +6,7 @@ interface TransactionLinkProps {
   short?: boolean
 }
 
-const EXPLORER_BASE = 'https://testnet.qie.digital'
+const EXPLORER_BASE = 'https://mainnet.qie.digital'
 
 function shortHash(hash: string): string {
   return `${hash.slice(0, 10)}…${hash.slice(-6)}`
