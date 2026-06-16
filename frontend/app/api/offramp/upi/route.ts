@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
     if (row?.offrampStatus !== 'PENDING') {
       await db
         .update(transfers)
-        .set({ offrampStatus: 'PENDING', offrampMethod: 'UPI', updatedAt: Date.now() })
+        .set({ offrampStatus: 'PENDING', offrampMethod: 'UPI', updatedAt: Math.floor(Date.now() / 1000) })
         .where(eq(transfers.id, transferId))
     }
   }
@@ -200,7 +200,7 @@ export async function POST(req: NextRequest) {
           offrampStatus: 'COMPLETED',
           offrampReference: stubId,
           offrampMethod: 'UPI',
-          updatedAt: Date.now(),
+          updatedAt: Math.floor(Date.now() / 1000),
         })
         .where(eq(transfers.id, transferId))
     }
@@ -237,7 +237,7 @@ export async function POST(req: NextRequest) {
           offrampStatus: 'COMPLETED',
           offrampReference: payout.id,
           offrampMethod: 'UPI',
-          updatedAt: Date.now(),
+          updatedAt: Math.floor(Date.now() / 1000),
         })
         .where(eq(transfers.id, transferId))
     }
@@ -254,7 +254,7 @@ export async function POST(req: NextRequest) {
     if (db) {
       await db
         .update(transfers)
-        .set({ offrampStatus: 'FAILED', updatedAt: Date.now() })
+        .set({ offrampStatus: 'FAILED', updatedAt: Math.floor(Date.now() / 1000) })
         .where(eq(transfers.id, transferId))
     }
 

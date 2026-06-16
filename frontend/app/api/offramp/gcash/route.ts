@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
 
     await db
       .update(transfers)
-      .set({ offrampStatus: 'PENDING', offrampMethod: 'GCASH', updatedAt: Date.now() })
+      .set({ offrampStatus: 'PENDING', offrampMethod: 'GCASH', updatedAt: Math.floor(Date.now() / 1000) })
       .where(eq(transfers.id, transferId))
   }
 
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
         offrampStatus: 'COMPLETED',
         offrampReference: stubId,
         offrampMethod: 'GCASH',
-        updatedAt: Date.now(),
+        updatedAt: Math.floor(Date.now() / 1000),
       })
       .where(eq(transfers.id, transferId))
   }

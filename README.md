@@ -25,6 +25,31 @@ We leverage the **QIE Blockchain** to drop cross-border fees to a flat **0.1%**,
 - **Sender:** Connects a wallet, enters a phone number, and sends QUSD (a stablecoin pegged to USD).
 - **Recipient:** Receives an SMS link and a 6-digit OTP. They click the link, enter the OTP, and the funds are instantly released to their local bank account via fiat rails (e.g., UPI, SPEI, OPay) — *without ever knowing they interacted with a blockchain.*
 
+## ❓ How It Works: Zero-Wallet Claim Flow
+
+The most common question is: **How does the money reach the recipient's bank/mobile account just by their phone number, without them needing a crypto wallet?**
+
+Here is the simple step-by-step flow:
+
+1. **Locking the Funds (Sender)**
+   The sender locks stablecoins (QUSD) inside the `EscrowVault` smart contract on-chain. The contract doesn't store a wallet address for the recipient. Instead, it locks the funds cryptographically under:
+   * A hash of the recipient's phone number (`phoneHash`).
+   * A hash of a random 6-digit passcode/OTP (`otpHash`).
+
+2. **Notifying the Recipient**
+   The recipient gets a claim link (via SMS or email) containing the transaction ID and the 6-digit OTP code.
+
+3. **Gasless Backend Claiming (The Relayer)**
+   The recipient opens the link, enters their phone number, and inputs the OTP. Since they don't have a wallet, private keys, or gas (QIE) to execute blockchain transactions, they submit the form to our **Relayer** (a secure backend server). The Relayer:
+   * Verifies the OTP and phone number match the on-chain lock.
+   * Signs the claim transaction and pays the network transaction fee (gas) on behalf of the recipient.
+   * Unlocks the QUSD from the smart contract.
+
+4. **Direct Bank Deposit (The Off-ramp)**
+   Once the Relayer unlocks the QUSD, it doesn't send crypto to the user. Instead, the Relayer immediately hands the QUSD to a local off-ramp payment provider (e.g., Razorpay/UPI in India, SPEI in Mexico, or GCash in the Philippines). The provider converts the stablecoins to local fiat currency and deposits it **directly into the recipient's bank account or mobile wallet** linked to their phone number.
+
+The recipient receives standard fiat currency directly in their bank account, without ever needing to touch crypto, create a wallet, or manage private keys!
+
 ## ✨ Key Features
 - **Phone-Number Routing:** Send money globally using only the recipient's phone number. No 0x addresses.
 - **On-Chain Escrow with OTP Claim:** Funds are locked in a secure smart contract (`EscrowVault`). The recipient claims them using a cryptographically hashed One-Time Password (OTP).

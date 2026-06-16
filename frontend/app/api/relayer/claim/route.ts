@@ -43,6 +43,11 @@ const activeChain = {
   rpcUrls: { default: { http: [env.NEXT_PUBLIC_RPC_URL] } },
 } as const
 
+function getCorridorId(index: number): string {
+  const mapping = ['ae-in', 'us-mx', 'gb-ng', 'sa-pk', 'sg-bd']
+  return mapping[index - 1] || 'ae-in'
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MAX_ATTEMPTS = 3
@@ -123,7 +128,7 @@ async function getDbTxHash(transferId: string): Promise<string | null> {
     .where(eq(transfers.id, transferId))
     .limit(1)
   const row = rows[0]
-  if (row?.status === 2 && row.txHash) return row.txHash
+  if (row?.status === 1 && row.txHash) return row.txHash
   return null
 }
 
@@ -241,7 +246,32 @@ export async function POST(req: NextRequest) {
 
   // 6. Idempotency — already CLAIMED on-chain (status=2) → return cached txHash from DB
   if (transfer.status === 2) {
-    const cachedTxHash = await getDbTxHash(transferId)
+    let cachedTxHash = await getDbTxHash(transferId)
+    if (!cachedTxHash && db) {
+      try {
+        const corridorId = getCorridorId(transfer.corridor)
+        await db.insert(transfers).values({
+          id: transferId,
+          txHash: null,
+          senderAddress: transfer.sender.toLowerCase(),
+          recipientPhoneHash: transfer.recipientPhoneHash,
+          recipientNickname: null,
+          amount: transfer.amount.toString(),
+          corridor: corridorId,
+          status: 1, // CLAIMED
+          offrampStatus: 'NONE',
+          smsStatus: 'SENT',
+          recipientEmail: null,
+          emailStatus: 'PENDING',
+          createdAt: Math.floor(Date.now() / 1000) - 3600,
+          updatedAt: Math.floor(Date.now() / 1000),
+          claimedAt: Math.floor(Date.now() / 1000),
+          expiry: Number(transfer.expiry),
+        })
+      } catch (e) {
+        log('warn', 'claim.idempotent_insert_failed', { err: String(e).slice(0, 100) })
+      }
+    }
     log('info', 'claim.idempotent', { transferId: transferId.slice(0, 10) + '…' })
     return NextResponse.json({ success: true, idempotent: true, txHash: cachedTxHash })
   }
@@ -297,10 +327,37 @@ export async function POST(req: NextRequest) {
     // 12. Persist to DB + clear attempts
     await clearDbAttempts(transferId)
     if (db) {
-      await db
+      const updated = await db
         .update(transfers)
-        .set({ status: 1, claimedAt: Date.now(), updatedAt: Date.now(), txHash })
+        .set({ status: 1, claimedAt: Math.floor(Date.now() / 1000), updatedAt: Math.floor(Date.now() / 1000), txHash })
         .where(eq(transfers.id, transferId))
+        .returning()
+
+      if (updated.length === 0) {
+        try {
+          const corridorId = getCorridorId(transfer.corridor)
+          await db.insert(transfers).values({
+            id: transferId,
+            txHash,
+            senderAddress: transfer.sender.toLowerCase(),
+            recipientPhoneHash: transfer.recipientPhoneHash,
+            recipientNickname: null,
+            amount: transfer.amount.toString(),
+            corridor: corridorId,
+            status: 1, // CLAIMED
+            offrampStatus: 'NONE',
+            smsStatus: 'SENT',
+            recipientEmail: null,
+            emailStatus: 'PENDING',
+            createdAt: Math.floor(Date.now() / 1000) - 60,
+            updatedAt: Math.floor(Date.now() / 1000),
+            claimedAt: Math.floor(Date.now() / 1000),
+            expiry: Number(transfer.expiry),
+          })
+        } catch (insertErr) {
+          log('error', 'claim.fallback_insert_failed', { err: String(insertErr).slice(0, 100) })
+        }
+      }
     }
 
     log('info', 'claim.success', {
