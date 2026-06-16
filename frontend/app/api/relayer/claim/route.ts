@@ -229,24 +229,28 @@ const claimSchema = z.object({
 
 export async function POST(req: NextRequest) {
   const start = Date.now()
+  let transferId = 'unknown'
+  let clientIp = 'unknown'
 
-  // 1. Parse + validate body
-  let body: unknown
-  try { body = await req.json() }
-  catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
+  try {
+    // 1. Parse + validate body
+    let body: unknown
+    try { body = await req.json() }
+    catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
 
-  const parsed = claimSchema.safeParse(body)
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: 'Validation failed', details: parsed.error.flatten().fieldErrors },
-      { status: 400 },
-    )
-  }
+    const parsed = claimSchema.safeParse(body)
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: 'Validation failed', details: parsed.error.flatten().fieldErrors },
+        { status: 400 },
+      )
+    }
 
-  const { transferId, otp, recipientPhone, payoutId } = parsed.data
-  const clientIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+    const { otp, recipientPhone, payoutId } = parsed.data
+    transferId = parsed.data.transferId
+    clientIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
 
-  log('info', 'claim.start', { transferId: transferId.slice(0, 10) + '…' })
+    log('info', 'claim.start', { transferId: transferId.slice(0, 10) + '…' })
 
   // 2a. Redis IP rate-limit (fast check, per IP per hour)
   const ipLimiter = getIpRatelimit()
@@ -559,6 +563,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       { error: 'Failed to process claim. Please try again.' },
+      { status: 500 },
+    )
+  }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    log('error', 'claim.fatal_unhandled', { err: msg })
+    return NextResponse.json(
+      { error: `Internal server error: ${msg.slice(0, 150)}` },
       { status: 500 },
     )
   }

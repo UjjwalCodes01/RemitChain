@@ -186,7 +186,15 @@ export default function ClaimPage() {
         })
       })
 
-      const data = await res.json()
+      let data: any = {}
+      try {
+        const text = await res.text()
+        if (text) {
+          data = JSON.parse(text)
+        }
+      } catch (jsonErr) {
+        console.error('Failed to parse response JSON:', jsonErr)
+      }
 
       if (res.status === 429) {
         setRetryAfterMs(data.retryAfterMs ?? 600_000)
