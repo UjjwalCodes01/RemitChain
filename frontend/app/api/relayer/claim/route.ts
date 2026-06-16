@@ -327,6 +327,48 @@ export async function POST(req: NextRequest) {
 
   log('info', 'claim.transfer_fetched', { status: transfer.status })
 
+  // Sync transfer to DB if it exists on-chain but is missing from DB cache (prevents foreign key errors on otp_attempts)
+  if (db) {
+    try {
+      const existing = await db
+        .select({ id: transfers.id })
+        .from(transfers)
+        .where(eq(transfers.id, transferId))
+        .limit(1)
+
+      if (existing.length === 0) {
+        log('info', 'claim.sync_missing_transfer_to_db', { transferId })
+        const corridorId = getCorridorId(transfer.corridor)
+        
+        // Map on-chain status (1=PENDING, 2=CLAIMED, 3=CANCELLED) to DB status (0=PENDING, 1=CLAIMED, 2=CANCELLED)
+        let dbStatus = 0
+        if (transfer.status === 1) dbStatus = 0
+        else if (transfer.status === 2) dbStatus = 1
+        else if (transfer.status === 3) dbStatus = 2
+
+        await db.insert(transfers).values({
+          id: transferId,
+          txHash: null,
+          senderAddress: transfer.sender.toLowerCase(),
+          recipientPhoneHash: transfer.recipientPhoneHash,
+          recipientNickname: null,
+          amount: transfer.amount.toString(),
+          corridor: corridorId,
+          status: dbStatus,
+          offrampStatus: 'NONE',
+          smsStatus: 'PENDING',
+          recipientEmail: null,
+          emailStatus: 'PENDING',
+          createdAt: Math.floor(Date.now() / 1000),
+          updatedAt: Math.floor(Date.now() / 1000),
+          expiry: Number(transfer.expiry),
+        })
+      }
+    } catch (dbErr) {
+      log('error', 'claim.sync_missing_transfer_failed', { err: String(dbErr) })
+    }
+  }
+
   // Validate payoutId format based on corridor
   const payoutIdClean = payoutId.trim()
   if (transfer.corridor === 1 && !/^[\w.-]+@[\w.-]+$/.test(payoutIdClean)) {
