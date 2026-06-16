@@ -114,13 +114,18 @@ contract RemitChainTest is BaseTest {
     }
 
     function test_RevertWhen_Send_KYCInsufficient() public {
-        // attacker has no KYC — pre-approve to isolate the revert to sendRemittance
-        vm.prank(attacker);
-        qusd.approve(address(vault), SEND_AMOUNT);
+        // attacker has no KYC, defaults to Tier 1 limit (500e6)
+        uint256 limit = kyc.DEFAULT_T1_LIMIT();
+        uint256 exceedAmount = limit + 1e6;
+        qusd.mint(attacker, exceedAmount);
 
-        vm.expectRevert(abi.encodeWithSelector(IKYCRegistry.InsufficientKYC.selector, attacker, uint8(1), uint8(0)));
+        // pre-approve to isolate the revert to sendRemittance
         vm.prank(attacker);
-        remit.sendRemittance(bytes32(0), SEND_AMOUNT, bytes32(0), 1);
+        qusd.approve(address(vault), exceedAmount);
+
+        vm.expectRevert(abi.encodeWithSelector(IKYCRegistry.DailyLimitExceeded.selector, attacker, limit, exceedAmount));
+        vm.prank(attacker);
+        remit.sendRemittance(bytes32(0), exceedAmount, bytes32(0), 1);
     }
 
     function test_RevertWhen_Send_WhenPaused() public {

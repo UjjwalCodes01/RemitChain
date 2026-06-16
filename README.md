@@ -80,17 +80,40 @@ Built with React, Next.js App Router, and TailwindCSS.
 ## 🏆 Hackathon Submission Details
 
 ### QIE Mainnet Contract Addresses
-These contracts are live on the QIE Mainnet and can be verified on the [QIE Explorer](https://mainnet.qie.digital/):
+All contracts are deployed on the **QIE Mainnet** and verified on the [QIE Explorer](https://mainnet.qie.digital/):
 - **Mock QUSD:** `0x9b5D310a92F05C3714E4163e43f226c7A6FB0827`
 - **RemitChain (Main):** `0x56c650167e2D3a20A1131bC3b9e23449bC604AEa`
 - **EscrowVault:** `0xbFC6e4dc09a59F9341EfACA72FFfff4ABF2e03FA`
 - **KYCRegistry:** `0xaab80c35136e336f3d0fcf113bd1a092bf206832`
 - **TimelockController:** `0xd26dc2efd20622867ef9e2c238047490652511d3`
 
-### Judge Testing (OTP Access)
-To test the full flow without needing access to the recipient's email/SMS inbox, judges can append the following `judge` token to the claim tracking URL. This securely exposes the 6-digit OTP in the UI for testing purposes.
-**Judge Access Token:** `70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c`
-Example usage: `https://remit-chain.vercel.app/track/123456?judge=70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c`
+---
+
+## 📲 Local Fiat Payout Rails & Validation
+
+RemitChain supports 5 major international corridors natively. Depending on the corridor selected by the sender, the recipient is prompted with the corresponding local bank or mobile wallet rail format:
+
+| Corridor Index | Country | Local Rail | Account Format | Validator Regex / Logic | API Provider |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **1 (ae-in)** | India | UPI | Virtual Payment Address (VPA) | `^[\w.-]+@[\w.-]+$` | Razorpay Payouts (Real API) |
+| **2 (us-mx)** | Mexico | SPEI | 18-digit CLABE code | `^\d{18}$` | SPEI Stub (Simulated Rail) |
+| **3 (gb-ng)** | Nigeria | OPay | 10-digit mobile number | `^\d{10}$` | OPay Stub (Simulated Rail) |
+| **4 (sa-pk)** | Pakistan | JazzCash | 11-digit mobile number | `^\d{11}$` | JazzCash Stub (Simulated Rail) |
+| **5 (sg-bd)** | Bangladesh | bKash | 11-digit wallet number | `^\d{11}$` | bKash Stub (Simulated Rail) |
+
+---
+
+## 🔍 Judge Demo & Testing Guide
+
+To test the full end-to-end remittance flow without needing a real recipient SMS inbox or phone number:
+
+1. **Initiate Transfer**: Connect a Metamask/web3 wallet on the homepage, enter a recipient phone number (e.g. `+919876543210`), and send any amount of QUSD.
+2. **Access Claim Details**: When the transfer transaction completes, click the claim link provided in the UI or SMS simulator.
+3. **Judge OTP Reveal**: Append the secure `judge` token parameter to the claim page URL to view the OTP.
+   - **Judge Token**: `70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c`
+   - **Example Link**: `https://remit-chain.vercel.app/claim/<transferId>?otp=<otpCode>&judge=70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c`
+4. **Claim Funds**: Click "Demo Mode — Reveal claim code" to auto-fill the OTP. Type the recipient phone number, enter a valid payout destination (e.g. `recipient@upi` for India or an 18-digit number for SPEI), and click **Claim Funds**.
+5. **Success Tracking**: The gasless relayer claims the escrow on-chain, executes the Razorpay or stub fiat off-ramp payout, updates the status, and redirects to the confirmation page.
 
 ---
 

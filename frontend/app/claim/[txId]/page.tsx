@@ -3,7 +3,7 @@
 import { useParams, useSearchParams } from 'next/navigation'
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
-import { CheckCircle2, Loader2, AlertCircle, Phone, FlaskConical, ChevronDown } from 'lucide-react'
+import { CheckCircle2, Loader2, AlertCircle, Phone, FlaskConical, ChevronDown, Banknote } from 'lucide-react'
 import { useReadContract } from 'wagmi'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
 import { NavBar } from '@/components/NavBar'
@@ -17,17 +17,39 @@ export default function ClaimPage() {
 
   const IS_DEMO = process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
   const otpFromUrl = searchParams.get('otp')
+  const judgeToken = searchParams.get('judge')
+  const [isJudgeVerified, setIsJudgeVerified] = useState(false)
   const [demoRevealed, setDemoRevealed] = useState(false)
+
+  // Verify judge token on mount/params change if not in public demo mode
+  useEffect(() => {
+    if (IS_DEMO || !judgeToken || !transferId || transferId.length !== 66) return
+    fetch(`/api/transfers/${transferId}/demo-otp?judge=${encodeURIComponent(judgeToken)}`)
+      .then(res => {
+        if (res.ok) setIsJudgeVerified(true)
+      })
+      .catch(() => {})
+  }, [transferId, judgeToken, IS_DEMO])
+
+  const showDemoCard = IS_DEMO || isJudgeVerified
 
   const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState(['', '', '', '', '', ''])
+  const [payoutId, setPayoutId] = useState('')
+  const [claimedPayoutId, setClaimedPayoutId] = useState('')
+  const [claimedRailName, setClaimedRailName] = useState('')
   const [claimState, setClaimState] = useState<'idle' | 'submitting' | 'success' | 'idempotent' | 'error' | 'locked'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const [retryAfterMs, setRetryAfterMs] = useState(0)
   const [countdown, setCountdown] = useState(0)
   const [smsResendState, setSmsResendState] = useState<'idle' | 'sending' | 'sent'>('idle')
   const [smsResendCooldown, setSmsResendCooldown] = useState(0)
+  const [currentTime, setCurrentTime] = useState<number>(0)
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
+
+  useEffect(() => {
+    setCurrentTime(Math.floor(Date.now() / 1000))
+  }, [])
 
   // Countdown timer for lockout
   useEffect(() => {
@@ -38,8 +60,11 @@ export default function ClaimPage() {
       setCountdown(Math.ceil(remaining / 1000))
       if (remaining === 0) { setClaimState('idle'); clearInterval(interval) }
     }, 500)
-    setCountdown(Math.ceil(retryAfterMs / 1000))
-    return () => clearInterval(interval)
+    const timer = setTimeout(() => setCountdown(Math.ceil(retryAfterMs / 1000)), 0)
+    return () => {
+      clearInterval(interval)
+      clearTimeout(timer)
+    }
   }, [claimState, retryAfterMs])
 
   // SMS resend cooldown
@@ -51,8 +76,11 @@ export default function ClaimPage() {
       setSmsResendCooldown(remaining)
       if (remaining === 0) { setSmsResendState('idle'); clearInterval(id) }
     }, 500)
-    setSmsResendCooldown(60)
-    return () => clearInterval(id)
+    const timer = setTimeout(() => setSmsResendCooldown(60), 0)
+    return () => {
+      clearInterval(id)
+      clearTimeout(timer)
+    }
   }, [smsResendState])
 
   // 1. Fetch Transfer Status
@@ -68,6 +96,46 @@ export default function ClaimPage() {
   })
 
   const status = transfer ? Number(transfer.status) : undefined
+
+  // Corridor rail calculations
+  const corridorId = transfer ? Number(transfer.corridor) : 1
+  let railName = 'UPI'
+  let railPlaceholder = 'recipient@upi'
+  let railLabel = 'UPI ID / VPA'
+  let railDescription = 'Funds will be deposited directly to this UPI address.'
+  let payoutRegexp = /^[\w.-]+@[\w.-]+$/
+
+  if (corridorId === 1) {
+    railName = 'UPI'
+    railPlaceholder = 'recipient@upi'
+    railLabel = 'UPI ID / VPA'
+    railDescription = 'Funds will be deposited directly to this UPI address.'
+    payoutRegexp = /^[\w.-]+@[\w.-]+$/
+  } else if (corridorId === 2) {
+    railName = 'SPEI'
+    railPlaceholder = '18-digit CLABE number'
+    railLabel = 'SPEI CLABE'
+    railDescription = '18-digit Mexican bank CLABE account number.'
+    payoutRegexp = /^\d{18}$/
+  } else if (corridorId === 3) {
+    railName = 'OPay'
+    railPlaceholder = '10-digit OPay account number'
+    railLabel = 'OPay Account'
+    railDescription = '10-digit Nigerian mobile wallet number.'
+    payoutRegexp = /^\d{10}$/
+  } else if (corridorId === 4) {
+    railName = 'JazzCash'
+    railPlaceholder = '11-digit JazzCash account number'
+    railLabel = 'JazzCash Account'
+    railDescription = '11-digit Pakistani mobile money account number.'
+    payoutRegexp = /^\d{11}$/
+  } else if (corridorId === 5) {
+    railName = 'bKash'
+    railPlaceholder = '11-digit bKash account number'
+    railLabel = 'bKash Account'
+    railDescription = '11-digit Bangladesh bKash wallet number.'
+    payoutRegexp = /^\d{11}$/
+  }
 
   // Handle OTP Input
   const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -98,7 +166,8 @@ export default function ClaimPage() {
   const isOtpComplete = otp.every(d => d !== '')
   // E.164-ish validation: must start with + and have at least 7 digits
   const isPhoneValid = /^\+[1-9]\d{6,14}$/.test(phone.trim())
-  const canSubmit = isOtpComplete && isPhoneValid && claimState === 'idle'
+  const isPayoutIdValid = payoutRegexp.test(payoutId.trim())
+  const canSubmit = isOtpComplete && isPhoneValid && isPayoutIdValid && claimState === 'idle'
 
   const submitClaim = async () => {
     if (!canSubmit) return
@@ -113,6 +182,7 @@ export default function ClaimPage() {
           transferId,
           otp: otp.join(''),
           recipientPhone: phone.trim(),
+          payoutId: payoutId.trim(),
         })
       })
 
@@ -142,8 +212,13 @@ export default function ClaimPage() {
 
       // idempotent = already claimed on-chain before this session
       if (data.idempotent) {
+        if (data.offrampMethod) {
+          setClaimedRailName(data.offrampMethod)
+        }
         setClaimState('idempotent')
       } else {
+        setClaimedPayoutId(payoutId.trim())
+        setClaimedRailName(railName)
         setClaimState('success')
       }
       if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([30, 50, 30])
@@ -191,7 +266,7 @@ export default function ClaimPage() {
               </div>
               <h1 className="text-2xl font-bold mb-2">Claim Successful! 🎉</h1>
               <p className="text-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>
-                The funds have been released and are on their way to your local account.
+                The funds have been released and are on their way to your local <strong style={{ color: 'var(--color-mint)' }}>{claimedRailName || railName}</strong> account{claimedPayoutId ? ` (${claimedPayoutId})` : ''}.
               </p>
               <Link
                 href="/"
@@ -214,7 +289,7 @@ export default function ClaimPage() {
               </div>
               <h1 className="text-2xl font-bold mb-2">Already Claimed</h1>
               <p className="text-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>
-                This transfer has already been claimed. The funds were released successfully.
+                This transfer has already been claimed. The funds were released successfully to your local <strong style={{ color: 'var(--color-mint)' }}>{claimedRailName || railName}</strong> account.
               </p>
               <Link
                 href="/"
@@ -224,7 +299,7 @@ export default function ClaimPage() {
                 Back to RemitChain
               </Link>
             </motion.div>
-          ) : status === 3 || (transfer && Number(transfer.expiry) > 0 && Date.now() / 1000 > Number(transfer.expiry)) ? (
+          ) : status === 3 || (transfer && Number(transfer.expiry) > 0 && currentTime > Number(transfer.expiry)) ? (
             <motion.div
               className="p-8 rounded-2xl border text-center"
               style={{ background: 'var(--color-surface)', borderColor: 'rgba(255,107,92,0.25)' }}
@@ -274,8 +349,8 @@ export default function ClaimPage() {
                 </p>
               </div>
 
-                {/* Demo Mode — OTP Reveal (only shown when ?otp= param present) */}
-                {IS_DEMO && otpFromUrl && (
+                {/* Demo Mode — OTP Reveal (only shown when ?otp= param present and showDemoCard is true) */}
+                {showDemoCard && otpFromUrl && (
                   <motion.div
                     className="mb-6 rounded-xl border overflow-hidden text-left"
                     style={{ borderColor: 'rgba(245,166,35,0.4)', background: 'rgba(245,166,35,0.06)' }}
@@ -345,6 +420,33 @@ export default function ClaimPage() {
                 </div>
                 <p className="text-xs mt-1.5" style={{ color: 'var(--color-text-tertiary)' }}>
                   Must match the number the sender used (E.164 format, e.g. +919876543210)
+                </p>
+              </div>
+
+              {/* Payout Destination Input */}
+              <div className="mb-6 text-left">
+                <label className="block text-xs font-semibold uppercase tracking-widest mb-2"
+                  style={{ color: 'var(--color-text-tertiary)' }}>
+                  Payout Destination ({railLabel})
+                </label>
+                <div className="flex items-center gap-3 px-4 h-14 rounded-xl border"
+                  style={{
+                    background: 'var(--color-surface)',
+                    borderColor: payoutId ? (isPayoutIdValid ? 'var(--color-mint)' : 'rgba(255,107,107,0.5)') : 'var(--color-border)'
+                  }}>
+                  <Banknote className="w-4 h-4 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+                  <input
+                    type="text"
+                    placeholder={railPlaceholder}
+                    value={payoutId}
+                    onChange={e => setPayoutId(e.target.value)}
+                    className="flex-1 bg-transparent outline-none text-sm font-mono"
+                    style={{ color: 'var(--color-text-primary)' }}
+                    aria-label={railLabel}
+                  />
+                </div>
+                <p className="text-xs mt-1.5" style={{ color: 'var(--color-text-tertiary)' }}>
+                  {railDescription}
                 </p>
               </div>
 

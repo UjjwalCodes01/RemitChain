@@ -53,6 +53,11 @@ const MAX_BLOCKS_PER_CHUNK = 2000n
 const MAX_CHUNKS_PER_RUN = 50   // Safety cap: ~100k blocks max per cron run
 const CONFIRMATIONS = 3n        // Process events only after 3 confirmations
 
+const DEPLOYMENT_BLOCKS: Record<number, bigint> = {
+  1983: 6444615n, // QIE Testnet
+  1990: 8537358n, // QIE Mainnet
+}
+
 // ── Event ABI fragments ───────────────────────────────────────────────────────
 
 const TransferInitiatedAbi = parseAbiItem(
@@ -140,7 +145,7 @@ async function processTransferInitiated(log: Log<bigint, number, false, typeof T
       set: {
         txHash: log.transactionHash ?? undefined,
         senderAddress: args.sender.toLowerCase(),
-        status: sql`LEAST(${transfers.status}, 0)`, // Don't downgrade status
+        status: sql`GREATEST(${transfers.status}, 0)`, // Don't downgrade status
         updatedAt: nowSec,
       },
     })
@@ -245,9 +250,9 @@ export async function pollAndProcess(): Promise<PollResult> {
     }
   }
 
-  // If cursor is 0 (first run), start from current block - 10000 (reasonable lookback)
+  // If cursor is 0 (first run), start from network-specific deployment block height
   const startBlock = fromBlock === 0n
-    ? (safeBlock > 10000n ? safeBlock - 10000n : 0n)
+    ? (DEPLOYMENT_BLOCKS[CHAIN_ID] ?? (safeBlock > 10000n ? safeBlock - 10000n : 0n))
     : fromBlock + 1n
 
   let processedBlock = fromBlock

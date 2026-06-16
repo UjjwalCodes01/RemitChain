@@ -43,8 +43,8 @@ async function main() {
     try {
       await sql.query(stmt)
       ok++
-    } catch (e: any) {
-      const msg = e?.message ?? String(e)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
       // "already exists" errors are safe to skip
       if (msg.includes('already exists') || msg.includes('duplicate')) {
         console.log(`⏭  Skip (already exists): ${stmt.slice(0, 60).replace(/\n/g, ' ')}...`)

@@ -268,11 +268,19 @@ contract KYCRegistryTest is BaseTest {
         kyc.checkAndConsume(sender, 100e6);
     }
 
-    function test_RevertWhen_CheckAndConsume_NoKYC() public {
-        // sender has no KYC
-        vm.expectRevert(abi.encodeWithSelector(IKYCRegistry.InsufficientKYC.selector, sender, uint8(1), uint8(0)));
+    function test_RevertWhen_CheckAndConsume_NoKYC_ExceedsDefaultLimit() public {
+        // sender has no KYC, defaults to Tier 1 (500e6)
+        uint256 exceedLimit = kyc.DEFAULT_T1_LIMIT() + 1e6;
+        vm.expectRevert(abi.encodeWithSelector(IKYCRegistry.DailyLimitExceeded.selector, sender, kyc.DEFAULT_T1_LIMIT(), exceedLimit));
+        vm.prank(address(remit));
+        kyc.checkAndConsume(sender, exceedLimit);
+    }
+
+    function test_RevertWhen_CheckAndConsume_NoKYC_SucceedsWithinLimit() public {
+        // sender has no KYC, defaults to Tier 1 (500e6). 100e6 should succeed.
         vm.prank(address(remit));
         kyc.checkAndConsume(sender, 100e6);
+        assertEq(kyc.getDailyUsage(sender), 100e6);
     }
 
     function test_RevertWhen_CheckAndConsume_ExceedsLimit_Exactly() public {
@@ -301,8 +309,8 @@ contract KYCRegistryTest is BaseTest {
     // getDailyLimit — tiers
     // =========================================================================
 
-    function test_GetDailyLimit_Tier0_ReturnsZero() public view {
-        assertEq(kyc.getDailyLimit(sender), 0);
+    function test_GetDailyLimit_Tier0_ReturnsDefaultTier1() public view {
+        assertEq(kyc.getDailyLimit(sender), kyc.DEFAULT_T1_LIMIT());
     }
 
     function test_GetDailyLimit_Tier1() public {

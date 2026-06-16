@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'motion/react'
 import { CheckCircle2, Clock, Share2, Loader2, ArrowLeft, MessageSquare, Banknote, Copy, ExternalLink, FlaskConical } from 'lucide-react'
 import Link from 'next/link'
@@ -29,22 +29,29 @@ export default function TransferTrackerPage() {
 
   const [currentStage, setCurrentStage] = useState<StageId>('sent')
   const [blockConfirms, setBlockConfirms] = useState(0)
-  const mountTime = useRef(Date.now())
+  const mountTime = useRef<number>(0)
+  useEffect(() => {
+    mountTime.current = Date.now()
+  }, [])
   const publicClient = usePublicClient()
 
   // Demo Mode — fetch plaintext OTP for on-screen display
   const IS_DEMO = process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
+  const searchParams = useSearchParams()
+  const judgeToken = searchParams.get('judge')
+  const showDemo = IS_DEMO || !!judgeToken
   const [demoOtp, setDemoOtp] = useState<string | null>(null)
   const [demoCopied, setDemoCopied] = useState(false)
 
   useEffect(() => {
-    if (!IS_DEMO || !transferId || transferId.length !== 66) return
+    if (!showDemo || !transferId || transferId.length !== 66) return
     // Poll for the OTP (send page stores it async after TX confirm)
     let attempts = 0
     const maxAttempts = 10
     const poll = async () => {
       try {
-        const res = await fetch(`/api/transfers/${transferId}/demo-otp`)
+        const url = `/api/transfers/${transferId}/demo-otp${judgeToken ? `?judge=${encodeURIComponent(judgeToken)}` : ''}`
+        const res = await fetch(url)
         if (res.ok) {
           const data = await res.json()
           if (data.otp) { setDemoOtp(data.otp); return }
@@ -54,7 +61,7 @@ export default function TransferTrackerPage() {
     }
     setTimeout(poll, 800) // first attempt after 800ms (TX store is fire-and-forget)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transferId])
+  }, [transferId, showDemo, judgeToken])
 
   // Off-chain metadata: SMS status, off-ramp status, recipient nickname
   const { data: detail } = useTransferDetail(transferId, true)
@@ -81,14 +88,18 @@ export default function TransferTrackerPage() {
   // Derive stage from transfer status
   useEffect(() => {
     if (!transfer) return
-    if (transfer.status === 2) {        // CLAIMED
-      setCurrentStage('claimed')
-    } else if (transfer.status === 1) { // PENDING
-      const ageMs = Date.now() - mountTime.current
-      if (ageMs > 30_000) setCurrentStage('notified')
-      else if (ageMs > 12_000) setCurrentStage('confirmed')
-      else setCurrentStage('sent')
+    const updateStage = () => {
+      if (transfer.status === 2) {        // CLAIMED
+        setCurrentStage('claimed')
+      } else if (transfer.status === 1) { // PENDING
+        const ageMs = mountTime.current ? Date.now() - mountTime.current : 0
+        if (ageMs > 30_000) setCurrentStage('notified')
+        else if (ageMs > 12_000) setCurrentStage('confirmed')
+        else setCurrentStage('sent')
+      }
     }
+    const timer = setTimeout(updateStage, 0)
+    return () => clearTimeout(timer)
   }, [transfer])
 
   // Block confirmation counter
@@ -347,8 +358,8 @@ export default function TransferTrackerPage() {
           </div>
         )}
 
-        {/* Demo Mode — OTP Card (visible only when NEXT_PUBLIC_DEMO_MODE=true) */}
-        {IS_DEMO && currentStage !== 'claimed' && (
+        {/* Demo Mode — OTP Card (visible only when showDemo=true) */}
+        {showDemo && currentStage !== 'claimed' && (
           <AnimatePresence>
             {demoOtp ? (
               <motion.div
@@ -376,7 +387,7 @@ export default function TransferTrackerPage() {
                 <div className="flex gap-2 px-4 pb-4">
                   <button
                     onClick={async () => {
-                      const claimUrl = `${window.location.origin}/claim/${txId}?otp=${demoOtp}`
+                      const claimUrl = `${window.location.origin}/claim/${txId}?otp=${demoOtp}${judgeToken ? `&judge=${encodeURIComponent(judgeToken)}` : ''}`
                       try { await navigator.clipboard.writeText(claimUrl); setDemoCopied(true); setTimeout(() => setDemoCopied(false), 2000) }
                       catch { window.prompt('Copy claim link:', claimUrl) }
                     }}
@@ -387,7 +398,7 @@ export default function TransferTrackerPage() {
                     {demoCopied ? 'Copied!' : 'Copy claim link'}
                   </button>
                   <a
-                    href={`/claim/${txId}?otp=${demoOtp}`}
+                    href={`/claim/${txId}?otp=${demoOtp}${judgeToken ? `&judge=${encodeURIComponent(judgeToken)}` : ''}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex-1 h-10 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"

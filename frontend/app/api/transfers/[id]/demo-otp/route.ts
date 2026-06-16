@@ -26,6 +26,21 @@ function demoOtpKey(transferId: string) {
   return `demo:otp:${transferId}`
 }
 
+function isAuthorized(req: NextRequest): boolean {
+  if (env.DEMO_MODE) return true
+
+  const judgeToken = req.nextUrl.searchParams.get('judge')
+  if (judgeToken && judgeToken === env.JUDGE_ACCESS_TOKEN) return true
+
+  const authHeader = req.headers.get('authorization')
+  if (authHeader) {
+    const token = authHeader.replace(/^Bearer\s+/i, '')
+    if (token === env.JUDGE_ACCESS_TOKEN) return true
+  }
+
+  return false
+}
+
 // ── POST — store OTP (called by sender's browser after TX confirms) ────────────
 
 const storeSchema = z.object({
@@ -36,10 +51,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // Hard guard — this route does not exist in production
-  if (!env.DEMO_MODE) {
+  if (!isAuthorized(req)) {
     return NextResponse.json(
-      { error: 'Demo Mode is not enabled' },
+      { error: 'Unauthorized — Demo Mode not enabled or invalid judge token' },
       { status: 403 }
     )
   }
@@ -85,13 +99,12 @@ export async function POST(
 // ── GET — retrieve OTP (called by tracker + demo panel) ──────────────────────
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // Hard guard — this route does not exist in production
-  if (!env.DEMO_MODE) {
+  if (!isAuthorized(req)) {
     return NextResponse.json(
-      { error: 'Demo Mode is not enabled' },
+      { error: 'Unauthorized — Demo Mode not enabled or invalid judge token' },
       { status: 403 }
     )
   }
