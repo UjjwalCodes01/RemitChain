@@ -113,7 +113,7 @@ To test the full end-to-end remittance flow without needing a real recipient SMS
    - **Judge Token**: `70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c`
    - **Example Link**: `https://remit-chain.vercel.app/claim/<transferId>?otp=<otpCode>&judge=70d0afc902bb8fa4949fc024d3d236bd94fba607f6de4af2340f0da67000c32c`
 4. **Claim Funds**: Click "Demo Mode — Reveal claim code" to auto-fill the OTP. Type the recipient phone number, enter a valid payout destination (e.g. `recipient@upi` for India or an 18-digit number for SPEI), and click **Claim Funds**.
-5. **Success Tracking**: The gasless relayer claims the escrow on-chain, executes the Razorpay or stub fiat off-ramp payout, updates the status, and redirects to the confirmation page.
+5. **Success Tracking**: The gasless relayer claims the escrow on-chain, executes the fiat off-ramp payout (which runs in sandbox simulation mode to guarantee a successful payout under test credentials), updates the status, and redirects to the confirmation page.
 
 ---
 
@@ -152,16 +152,16 @@ pnpm install
 ```
 
 **Environment Variables:**
-Create a `.env.local` file inside the `frontend` folder:
+Create a `.env` file inside the `frontend` folder:
 ```env
 NEXT_PUBLIC_CHAIN_ID=1990
-NEXT_PUBLIC_RPC_URL=https://rpc-mainnet.qie.network
+NEXT_PUBLIC_RPC_URL=https://rpc1mainnet.qie.digital/
 NEXT_PUBLIC_RELAYER_ADDRESS=0xYourRelayerAddress
 RELAYER_PRIVATE_KEY=0xYourRelayerPrivateKey
 
-# API Keys
+# API Keys (If using 'rzp_test_' keys, the app automatically runs in sandbox simulation mode)
 RESEND_API_KEY=re_...
-RAZORPAY_KEY_ID=rzp_...
+RAZORPAY_KEY_ID=rzp_test_...
 RAZORPAY_KEY_SECRET=...
 ```
 
