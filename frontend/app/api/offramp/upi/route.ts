@@ -23,6 +23,7 @@ import { createPublicClient, http } from 'viem'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
 import { db, transfers } from '@/lib/db'
 import { serverChain } from '@/lib/chain-config'
+import { qusdToLocalSubunit } from '@/lib/fx/rates'
 
 // ── Chain for on-chain status check ──────────────────────────────────────────
 
@@ -214,10 +215,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Amount: 1 QUSD ≈ 83 INR → convert to paise (×83 ×100 = ×8300)
-    // In production: fetch live rate from QIE Oracle
-    // TODO(qie): replace with real FX rate from QIE Oracle
-    const amountPaise = 8300 // placeholder: 1 QUSD = ₹83 = 8300 paise
+    // Amount: convert QUSD (6 decimals) to INR paise using live FX rate
+    // Live rate is fetched from open.er-api.com with a 5-minute in-memory cache
+    // Falls back to seeded 83.45 if fetch fails
+    const amountPaise = await qusdToLocalSubunit(BigInt(dbRow?.amount ?? '0'), 'INR', 100)
 
     const payout = await withRetry(() =>
       razorpayPayout({

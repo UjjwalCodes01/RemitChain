@@ -35,6 +35,40 @@ export default function TransferTrackerPage() {
   }, [])
   const publicClient = usePublicClient()
 
+  // ── Live expiry countdown ─────────────────────────────────────────────────
+  const [expiryLabel, setExpiryLabel] = useState<string>('48h remaining')
+  const [expiryUrgent, setExpiryUrgent] = useState(false)
+
+  useEffect(() => {
+    if (!transfer || currentStage === 'claimed') return
+    const expiryTs = Number(transfer.expiry) // UNIX seconds
+    if (!expiryTs) return
+    const update = () => {
+      const nowSec = Math.floor(Date.now() / 1000)
+      const diffSec = expiryTs - nowSec
+      if (diffSec <= 0) {
+        setExpiryLabel('Expired')
+        setExpiryUrgent(true)
+        return
+      }
+      const h = Math.floor(diffSec / 3600)
+      const m = Math.floor((diffSec % 3600) / 60)
+      const s = diffSec % 60
+      setExpiryUrgent(diffSec < 3600) // red when < 1 hour
+      if (h > 0) {
+        setExpiryLabel(`${h}h ${m}m remaining`)
+      } else if (m > 0) {
+        setExpiryLabel(`${m}m ${s}s remaining`)
+      } else {
+        setExpiryLabel(`${s}s remaining`)
+      }
+    }
+    update()
+    const id = setInterval(update, 1000)
+    return () => clearInterval(id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transfer, currentStage])
+
   // Demo Mode — fetch plaintext OTP for on-screen display
   const IS_DEMO = process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
   const searchParams = useSearchParams()
@@ -351,9 +385,9 @@ export default function TransferTrackerPage() {
                 Share
               </button>
             </div>
-            <p className="text-xs mt-2" style={{ color: 'var(--color-text-tertiary)' }}>
+            <p className="text-xs mt-2" style={{ color: expiryUrgent ? 'var(--color-coral)' : 'var(--color-text-tertiary)' }}>
               <Clock className="w-3 h-3 inline mr-1" />
-              Expires in 48 hours
+              {expiryLabel}
             </p>
           </div>
         )}

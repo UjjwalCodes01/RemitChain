@@ -258,7 +258,7 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center gap-4">
             <a
-              href="https://github.com"
+              href="https://github.com/UjjwalCodes01/RemitChain"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-[var(--color-text-secondary)] transition-colors"

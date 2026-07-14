@@ -522,20 +522,27 @@ export default function ClaimPage() {
                 ) : 'Claim Funds'}
               </button>
 
-              {/* SMS resend */}
+              {/* SMS / Email resend */}
               <div className="mt-8 pt-6 border-t text-left" style={{ borderColor: 'var(--color-border)' }}>
                 <p className="text-xs font-semibold mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-                  Didn&apos;t receive the SMS?
+                  Didn&apos;t receive the code?
                 </p>
                 <button
                   disabled={smsResendState !== 'idle'}
                   onClick={async () => {
+                    if (!phone.trim() && !params.txId) return
                     setSmsResendState('sending')
                     try {
-                      await fetch('/api/notify', {
+                      const body: Record<string, string> = {}
+                      if (/^\+[1-9]\d{6,14}$/.test(phone.trim())) {
+                        body.recipientPhone = phone.trim()
+                      }
+                      // Note: email resend not surfaced here since we don't collect
+                      // recipient email on the claim page (privacy by design)
+                      await fetch(`/api/transfers/${transferId}/resend`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ transferId, recipientPhone: phone.trim() || undefined }),
+                        body: JSON.stringify(body),
                       })
                     } catch { /* non-fatal */ }
                     setSmsResendState('sent')
@@ -546,7 +553,7 @@ export default function ClaimPage() {
                   {smsResendState === 'sending' && <Loader2 className="w-3 h-3 animate-spin" />}
                   {smsResendState === 'sent'
                     ? `Resent! Check your messages (retry in ${smsResendCooldown}s)`
-                    : 'Resend claim link via SMS'}
+                    : 'Resend claim code'}
                 </button>
               </div>
             </>

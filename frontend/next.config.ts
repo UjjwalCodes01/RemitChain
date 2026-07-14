@@ -25,8 +25,31 @@ const nextConfig: NextConfig = {
         headers: [
           { key: 'X-DNS-Prefetch-Control', value: 'on' },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          // DENY prevents any iframe embedding — critical for financial apps
+          { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          {
+            key: 'Permissions-Policy',
+            value: 'camera=(), microphone=(), geolocation=(), payment=()',
+          },
+          {
+            key: 'Content-Security-Policy',
+            value: [
+              "default-src 'self'",
+              // Next.js inline scripts + wagmi/viem
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              // Inline styles from emotion/framer/tailwind
+              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+              "font-src 'self' https://fonts.gstatic.com",
+              // QIE RPC, Resend, Razorpay, open.er-api.com FX, Neon DB
+              "connect-src 'self' https://*.qie.digital wss://*.qie.digital https://api.resend.com https://api.razorpay.com https://open.er-api.com https://*.neon.tech https://*.upstash.io",
+              "img-src 'self' data: blob:",
+              "frame-src 'none'",
+              "object-src 'none'",
+              "base-uri 'self'",
+              "form-action 'self'",
+            ].join('; '),
+          },
         ],
       },
     ]

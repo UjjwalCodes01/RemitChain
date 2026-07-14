@@ -283,7 +283,7 @@ export default function DashboardPage() {
                         ${tx.amount ? formatQusd(tx.amount) : '—'}
                       </p>
                       <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                        {tx.createdAt ? new Date(tx.createdAt).toLocaleDateString() : ''}
+                        {tx.createdAt ? new Date(tx.createdAt * 1000).toLocaleDateString() : ''}
                       </p>
                     </div>
                   </Link>

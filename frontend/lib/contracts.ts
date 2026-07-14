@@ -20,7 +20,7 @@ const CONTRACT_ADDRESSES = {
     qusd:            '0x56AD1E16394Ae6F8B3204b07e988f9d37497e58f' as const,
     feeTreasury:     '0x3660362BeB3A95CE16D981e7D30E1e025E741393' as const,
   },
-  // QIE Mainnet (chainId 1990) — populated after: forge script Deploy.s.sol --rpc-url qie_mainnet --broadcast
+  // QIE Mainnet (chainId 1990)
   1990: {
     remitChain:      '0x56c650167e2D3a20A1131bC3b9e23449bC604AEa' as const,
     escrowVault:     '0xbFC6e4dc09a59F9341EfACA72FFfff4ABF2e03FA' as const,
@@ -33,15 +33,23 @@ const CONTRACT_ADDRESSES = {
 
 type SupportedChainId = keyof typeof CONTRACT_ADDRESSES
 
-const _chainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID) as SupportedChainId
+// Default to mainnet (1990) when NEXT_PUBLIC_CHAIN_ID is not set during build.
+// This matches chain-config.ts behaviour and prevents module-load-time crashes.
+const _rawChainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID)
+const _chainId: SupportedChainId = (
+  _rawChainId === 1983 ? 1983 : 1990
+)
 
 function getContracts() {
   const addrs = CONTRACT_ADDRESSES[_chainId]
   if (!addrs) {
-    throw new Error(
+    // This should never happen because of the ternary default above,
+    // but keep the guard for safety.
+    console.error(
       `[contracts] No addresses configured for chain ${_chainId}. ` +
-      `Supported: ${Object.keys(CONTRACT_ADDRESSES).join(', ')}.`
+      `Supported: ${Object.keys(CONTRACT_ADDRESSES).join(', ')}. Falling back to mainnet.`
     )
+    return CONTRACT_ADDRESSES[1990]
   }
   return addrs
 }
@@ -65,3 +73,4 @@ export const QUSD_DECIMALS = 6 as const
 
 /** Whether the app is targeting a production mainnet */
 export const IS_MAINNET = _chainId === 1990
+

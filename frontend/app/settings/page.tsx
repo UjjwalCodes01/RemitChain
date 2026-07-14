@@ -81,7 +81,7 @@ export default function SettingsPage() {
         </div>
 
         <div className="mt-8 text-center">
-          <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>RemitChain v0.2.0 · {activeChain.name}</p>
+          <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>RemitChain v1.0.0 · {activeChain.name}</p>
         </div>
       </main>
 

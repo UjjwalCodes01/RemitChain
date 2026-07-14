@@ -28,6 +28,7 @@ import {
 } from '@/lib/relayer/claim'
 import { db, transfers, otpAttempts } from '@/lib/db'
 import { getIpRatelimit } from '@/lib/db/redis'
+import { qusdToLocalSubunit, CORRIDOR_CURRENCY } from '@/lib/fx/rates'
 
 // ── Active chain (selected by NEXT_PUBLIC_CHAIN_ID) ──────────────────────────
 // This must match the chain the contracts are deployed on.
@@ -485,12 +486,13 @@ export async function POST(req: NextRequest) {
     offrampMethod = 'UPI'
     const keyId = process.env.RAZORPAY_KEY_ID
     const keySecret = process.env.RAZORPAY_KEY_SECRET
-    const amountPaise = Math.round((Number(transfer.amount) / 1000000) * 83.45 * 100)
+    // Use live FX rate (5-min cached); falls back to seeded 83.45 if fetch fails
+    const amountPaise = await qusdToLocalSubunit(transfer.amount, 'INR', 100)
 
     if (!keyId || !keySecret || keyId.startsWith('rzp_test_')) {
-      offrampReference = `rp_stub_${Date.now()}_${transferId.slice(2, 8)}`
+      offrampReference = `rp_stub_${Date.now()}_${transferId.slice(2, 8)}_${payoutIdClean.slice(0, 8)}`
       offrampStatus = 'COMPLETED'
-      log('info', 'claim.offramp_upi_stub', { amountPaise, payoutIdClean })
+      log('info', 'claim.offramp_upi_stub', { amountPaise, upiId: payoutIdClean })
     } else {
       try {
         const payout = await withRetry(() =>
@@ -505,7 +507,7 @@ export async function POST(req: NextRequest) {
         )
         offrampReference = payout.id
         offrampStatus = payout.status === 'failed' ? 'FAILED' : 'COMPLETED'
-        log('info', 'claim.offramp_upi_razorpay_success', { payoutId: payout.id })
+        log('info', 'claim.offramp_upi_razorpay_success', { payoutId: payout.id, upiId: payoutIdClean })
       } catch (payoutErr) {
         log('error', 'claim.offramp_upi_razorpay_failed', { err: String(payoutErr) })
         offrampStatus = 'FAILED'
@@ -513,17 +515,22 @@ export async function POST(req: NextRequest) {
       }
     }
   } else {
-    // General stub for other corridors
-    const mapping: Record<number, { method: string; rate: number }> = {
-      2: { method: 'SPEI', rate: 17.12 },
-      3: { method: 'OPay', rate: 2018.0 },
-      4: { method: 'JazzCash', rate: 75.2 },
-      5: { method: 'bKash', rate: 82.4 },
+    // Stubs for non-UPI corridors — include payoutId for traceability
+    const methodMap: Record<number, string> = {
+      2: 'SPEI',
+      3: 'OPay',
+      4: 'JazzCash',
+      5: 'bKash',
     }
-    const cfg = mapping[transfer.corridor] || { method: 'Payout', rate: 1.0 }
-    offrampMethod = cfg.method
-    offrampReference = `${cfg.method.toLowerCase()}_stub_${Date.now()}_${transferId.slice(2, 8)}`
-    log('info', 'claim.offramp_stub', { corridor: transfer.corridor, method: offrampMethod, payoutIdClean })
+    const currencyCode = CORRIDOR_CURRENCY[transfer.corridor] ?? 'USD'
+    offrampMethod = methodMap[transfer.corridor] ?? 'Payout'
+    offrampReference = `${offrampMethod.toLowerCase()}_stub_${Date.now()}_to_${payoutIdClean.slice(0, 12)}`
+    log('info', 'claim.offramp_stub', {
+      corridor: transfer.corridor,
+      method: offrampMethod,
+      currency: currencyCode,
+      destination: payoutIdClean,
+    })
   }
 
   try {

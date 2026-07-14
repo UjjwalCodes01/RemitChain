@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /claim/
+Disallow: /transfer/
+Disallow: /faucet
+
+Sitemap: https://remitchain.vercel.app/sitemap.xml
