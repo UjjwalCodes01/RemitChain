@@ -13,6 +13,7 @@
  */
 
 import { serverEnv } from '@/lib/env.server'
+import { IS_PRODUCTION_CHAIN } from '@/lib/env'
 import { sendSms } from '@/lib/sms/send'
 import {
   buildOtpEmailHtml,
@@ -116,6 +117,17 @@ async function sendOtpEmail(payload: NotifyPayload): Promise<NotifyResult> {
 
   // ── 2. Resend fallback (only works to verified email on free tier) ────────
   if (!RESEND_API_KEY) {
+    // Returning success here would tell the sender their recipient had been
+    // notified when no message was sent, and the recipient would never learn
+    // there was money waiting for them. On a production chain that is a lost
+    // transfer, so fail honestly and let /api/transfers/confirm surface it.
+    if (IS_PRODUCTION_CHAIN) {
+      return {
+        channel: 'email',
+        success: false,
+        error: 'No email provider is configured (RESEND_API_KEY or GMAIL_USER/GMAIL_APP_PASSWORD)',
+      }
+    }
     console.log(`[EMAIL-STUB] To: ${to} | Transfer: ${transferId.slice(0, 10)}… | OTP: [REDACTED]`)
     console.log(`[EMAIL-STUB] Claim URL: ${claimUrl}`)
     return { channel: 'email', success: true }

@@ -552,7 +552,14 @@ export async function getPayoutByProviderRef(
   return rows[0] ?? null
 }
 
-/** Transfers whose money has settled on-chain but which have no payout row. */
+/**
+ * Transfers whose escrow has released but which have no payout row.
+ *
+ * This is the one failure the claim route deliberately allows — a crash between
+ * the on-chain broadcast and the enqueue. `payoutDestinationEnc` is written
+ * BEFORE the broadcast, so these are repairable without contacting the
+ * recipient.
+ */
 export async function findOrphanedClaims(limit = 20) {
   if (!db) return []
   return db
@@ -562,9 +569,74 @@ export async function findOrphanedClaims(limit = 20) {
       netAmount: transfers.netAmount,
       amount: transfers.amount,
       claimedAt: transfers.claimedAt,
+      payoutDestinationEnc: transfers.payoutDestinationEnc,
+      quotedRate: transfers.quotedRate,
+      quotedLocalMinor: transfers.quotedLocalMinor,
     })
     .from(transfers)
     .leftJoin(payouts, eq(payouts.transferId, transfers.id))
     .where(and(eq(transfers.status, 1), isNull(payouts.id)))
     .limit(limit)
+}
+
+/**
+ * Recreate the payout for a claim that lost its enqueue.
+ *
+ * Safe to run repeatedly: `enqueuePayout` is idempotent on transferId, and this
+ * only ever runs for transfers the chain already reports as CLAIMED — so it can
+ * never pay ahead of settlement.
+ */
+export async function repairOrphanedClaim(
+  orphan: Awaited<ReturnType<typeof findOrphanedClaims>>[number],
+  isProductionChain: boolean,
+): Promise<'repaired' | 'needs_human'> {
+  if (!orphan.payoutDestinationEnc) {
+    // Pre-dates the intent column, or the intent write itself failed. The
+    // recipient's destination is genuinely unknown and a human has to ask.
+    logPayout('error', 'payout.orphaned_claim_unrecoverable', {
+      transferId: `${orphan.id.slice(0, 10)}…`,
+      corridor: orphan.corridor,
+      netAmount: orphan.netAmount ?? orphan.amount,
+      claimedAt: orphan.claimedAt,
+      action: 'Contact the recipient for payout details and create the payout manually',
+    })
+    return 'needs_human'
+  }
+
+  const { decryptSecret } = await import('@/lib/crypto/secretbox')
+  const destination = decryptSecret(orphan.payoutDestinationEnc)
+  if (!destination) {
+    logPayout('error', 'payout.orphaned_claim_undecryptable', {
+      transferId: `${orphan.id.slice(0, 10)}…`,
+      action: 'SECRETS_ENCRYPTION_KEY may have changed; recover manually',
+    })
+    return 'needs_human'
+  }
+
+  const result = await enqueuePayout(
+    {
+      transferId: orphan.id,
+      corridorId: orphan.corridor,
+      destination,
+      netAmountBaseUnits: BigInt(orphan.netAmount ?? orphan.amount),
+      quotedRate: orphan.quotedRate,
+      quotedLocalMinor: orphan.quotedLocalMinor,
+    },
+    isProductionChain,
+  )
+
+  if (!result.ok) {
+    logPayout('error', 'payout.orphan_repair_failed', {
+      transferId: `${orphan.id.slice(0, 10)}…`,
+      code: result.code,
+      error: result.error,
+    })
+    return 'needs_human'
+  }
+
+  logPayout('info', 'payout.orphan_repaired', {
+    transferId: `${orphan.id.slice(0, 10)}…`,
+    payoutId: result.payout.id,
+  })
+  return 'repaired'
 }

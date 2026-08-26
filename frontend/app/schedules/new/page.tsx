@@ -128,8 +128,21 @@ export default function NewSchedulePage() {
           style={{ background: 'var(--color-mint)', color: 'var(--color-ink)', opacity: (!contact || !amount || saving) ? 0.5 : 1 }}
         >
           {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-          Schedule Transfer
+          Set Reminder
         </button>
+
+        {/* Be explicit about what this does. Sending requires a signature from
+            the sender's wallet, which the server cannot produce on their
+            behalf — so a schedule is a reminder, not an automatic payment.
+            The button previously read "Schedule Transfer", which implied the
+            money would move on its own. */}
+        <p
+          className="text-xs text-center mt-4 mb-8"
+          style={{ color: 'var(--color-text-tertiary)' }}
+        >
+          We&apos;ll remind you when this is due. Money never moves without you
+          approving it in your wallet, so nothing is sent automatically.
+        </p>
       </main>
     </div>
   )

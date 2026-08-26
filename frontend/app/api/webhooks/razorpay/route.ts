@@ -25,6 +25,8 @@ import { applyProviderResult, getPayoutByProviderRef, logPayout } from '@/lib/pa
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// Razorpay retries on timeout, so keep this short and let it redeliver.
+export const maxDuration = 20
 
 export async function POST(req: NextRequest) {
   // The signature covers the exact bytes received. Reading the body as text and

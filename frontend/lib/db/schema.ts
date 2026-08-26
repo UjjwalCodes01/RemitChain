@@ -79,6 +79,13 @@ export const transfers = pgTable(
     claimSecretEnc: text('claim_secret_enc'),
     otpEnc: text('otp_enc'),
 
+    // Where the recipient asked to be paid, recorded BEFORE the on-chain claim
+    // is broadcast. If the request dies between the broadcast and the payout
+    // enqueue, this is what lets the cron repair the orphan instead of leaving
+    // released funds with nowhere to go. Encrypted — it is a bank identifier.
+    payoutDestinationEnc: text('payout_destination_enc'),
+    payoutIntentAt: epochMs('payout_intent_at'),
+
     // On-chain status, synced by the event listener.
     // 0=PENDING 1=CLAIMED 2=CANCELLED
     status: integer('status').notNull().default(0),

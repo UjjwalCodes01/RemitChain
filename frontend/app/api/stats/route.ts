@@ -2,14 +2,18 @@
  * app/api/stats/route.ts
  * GET /api/stats
  *
- * Judge dashboard stats — aggregate numbers for the RemitChain demo.
- * Cached 30s in Redis. Falls back to DB query when Redis is unavailable.
+ * Public aggregate statistics, computed from real transfer records.
+ * Cached 30s in Redis. Falls back to a direct DB query when Redis is absent.
+ *
+ * Every number here is derived from the `transfers` and `payouts` tables. There
+ * are no seeded or illustrative figures: on a fresh deployment this returns
+ * zeros, which is the honest answer.
  *
  * Fields returned:
  *   - Core aggregates: total, volume, claimed, pending, cancelled
  *   - Funnel: sent → SMS → claimed → offramp (with conversion %)
  *   - Corridor breakdown: [{ corridor, count, volume }]
- *   - Fee savings vs Western Union
+ *   - Fee saving vs the global average cost of remitting (see BENCHMARK_FEE_PCT)
  *   - Recent 5 transfers (truncated — no PII)
  *   - Unique sender count
  */
@@ -23,8 +27,27 @@ export const dynamic = 'force-dynamic'
 
 const CACHE_KEY = 'stats:agg'
 const CACHE_TTL = 30 // seconds
-const WU_FEE_PCT = 0.045  // 4.5% Western Union fee
-const OUR_FEE_PCT = 0.001 // 0.1% our fee
+/**
+ * Benchmark cost of sending remittances, used for the "fees saved" comparison.
+ *
+ * 6.2% is the global average total cost of sending USD 200, published by the
+ * World Bank's Remittance Prices Worldwide database. It is a citable,
+ * industry-standard figure.
+ *
+ * It replaces a hard-coded `WU_FEE_PCT = 0.045` that the public /stats page
+ * rendered as the assertion "WU charges 4.5%". Naming a specific competitor and
+ * a specific rate, with no source and no corridor qualification, is a claim a
+ * regulated money-services business has to be able to substantiate — and
+ * Western Union's actual pricing varies widely by corridor, amount and payout
+ * method, so no single figure would have been correct.
+ *
+ * Override with STATS_BENCHMARK_FEE_PCT if you have a corridor-specific source.
+ */
+const BENCHMARK_FEE_PCT = Number(process.env.STATS_BENCHMARK_FEE_PCT) || 0.062
+const BENCHMARK_SOURCE = 'World Bank Remittance Prices Worldwide — global average, USD 200'
+
+/** Our protocol fee: 10 bps, matching EscrowVault.feeBps. */
+const OUR_FEE_PCT = 0.001
 
 interface CorridorStat {
   corridor: string
@@ -57,7 +80,11 @@ interface StatsResponse {
   smsRate: number          // smsDeliveredCount / totalTransfers %
   offrampRate: number      // offrampCompletedCount / claimedCount %
   // Fee savings
-  feeSavedVsWUUSDC: number // totalVolume * (WU_FEE_PCT - OUR_FEE_PCT)
+  /** totalVolume * (BENCHMARK_FEE_PCT - OUR_FEE_PCT) */
+  feeSavedVsBenchmarkUSDC: number
+  benchmarkFeePct: number
+  benchmarkSource: string
+  ourFeePct: number
   // Breakdown
   activeCorridor: string | null
   corridorBreakdown: CorridorStat[]
@@ -105,7 +132,10 @@ export async function GET(_req: NextRequest) {
       claimedCount: 0, pendingCount: 0, cancelledCount: 0, uniqueSenders: 0,
       smsDeliveredCount: 0, offrampCompletedCount: 0,
       claimRate: 0, smsRate: 0, offrampRate: 0,
-      feeSavedVsWUUSDC: 0,
+      feeSavedVsBenchmarkUSDC: 0,
+      benchmarkFeePct: BENCHMARK_FEE_PCT,
+      benchmarkSource: BENCHMARK_SOURCE,
+      ourFeePct: OUR_FEE_PCT,
       activeCorridor: null, corridorBreakdown: [], recentTransfers: [],
       cachedAt: new Date().toISOString(), source: 'empty',
     }
@@ -179,7 +209,7 @@ export async function GET(_req: NextRequest) {
     createdAt: t.createdAt,
   }))
 
-  const feeSavedVsWUUSDC = totalVolumeUSDC * (WU_FEE_PCT - OUR_FEE_PCT)
+  const feeSavedVsBenchmarkUSDC = totalVolumeUSDC * (BENCHMARK_FEE_PCT - OUR_FEE_PCT)
 
   const stats: StatsResponse = {
     totalTransfers,
@@ -193,7 +223,10 @@ export async function GET(_req: NextRequest) {
     claimRate:   pct(claimedCount, totalTransfers),
     smsRate:     pct(smsDeliveredCount, totalTransfers),
     offrampRate: pct(offrampCompleted, claimedCount),
-    feeSavedVsWUUSDC,
+    feeSavedVsBenchmarkUSDC,
+    benchmarkFeePct: BENCHMARK_FEE_PCT,
+    benchmarkSource: BENCHMARK_SOURCE,
+    ourFeePct: OUR_FEE_PCT,
     activeCorridor: corridorBreakdown[0]?.corridor ?? null,
     corridorBreakdown,
     recentTransfers,

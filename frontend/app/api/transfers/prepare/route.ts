@@ -45,6 +45,8 @@ import { clientIp, log } from '@/lib/http'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// Reads the sender nonce from chain and fetches an FX quote.
+export const maxDuration = 30
 
 /** Matches the on-chain MIN_AMOUNT of 1 QUSD. */
 const MIN_AMOUNT_BASE_UNITS = 1_000_000n

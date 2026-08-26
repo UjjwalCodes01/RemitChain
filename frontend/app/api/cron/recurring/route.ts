@@ -50,8 +50,8 @@ export async function GET(req: NextRequest) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           address: schedule.senderAddress,
-          title: '🔁 Scheduled Transfer Due',
-          body: `Send ${schedule.amount} QUSD to ${schedule.recipientNickname ?? 'recipient'}?`,
+          title: '🔁 Transfer reminder',
+          body: `Ready to send ${schedule.amount} QUSD to ${schedule.recipientNickname ?? 'your recipient'}? Tap to review.`,
           url: '/send',
         }),
       })

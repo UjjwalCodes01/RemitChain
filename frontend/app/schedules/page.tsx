@@ -91,7 +91,7 @@ export default function SchedulesPage() {
               style={{ background: 'var(--color-surface-elevated)' }}>
               <CalendarClock className="w-10 h-10" style={{ color: 'var(--color-text-tertiary)' }} />
             </div>
-            <h2 className="text-lg font-semibold mb-2" style={{ color: 'var(--color-text-primary)' }}>No schedules yet</h2>
+            <h2 className="text-lg font-semibold mb-2" style={{ color: 'var(--color-text-primary)' }}>No reminders yet</h2>
             <p className="text-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>
               Schedule automated transfers to family so you never forget.
             </p>

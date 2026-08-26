@@ -9,6 +9,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { parseUnits } from 'viem'
 import { NavBar } from '@/components/NavBar'
 import { useChainGuard } from '@/hooks/useChainGuard'
+import { IS_PRODUCTION_CHAIN } from '@/lib/env'
 import { REMITCHAIN_ADDRESS, ESCROW_VAULT_ADDRESS, QUSD_ADDRESS, QUSD_DECIMALS, RemitChainAbi, ERC20Abi } from '@/lib/contracts'
 import { activeChain } from '@/lib/chains'
 import { VoiceInput } from '@/components/VoiceInput'
@@ -43,6 +44,13 @@ interface CorridorInfo {
 }
 
 const FEE_BPS = 10 // 0.1%
+
+/**
+ * Benchmark cost of remitting, for the fee comparison.
+ * 6.2% is the World Bank's published global average for sending USD 200 —
+ * a citable figure, unlike the unsourced competitor rate this replaced.
+ */
+const BENCHMARK_FEE_PCT = 6.2
 
 export default function SendPage() {
   const { isConnected, address } = useAccount()
@@ -616,8 +624,22 @@ export default function SendPage() {
               <p className="text-xs font-semibold mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
                 Fee comparison
               </p>
-              <FeeBar label="Western Union" feePct={4.5} amount={numericAmount} color="var(--color-coral)" />
+              {/* Compared against a citable industry average rather than a named
+                  competitor. This previously read "Western Union · 4.5%" with no
+                  source — a specific rate attributed to a specific company is a
+                  claim a money-services business has to substantiate, and WU's
+                  real pricing varies by corridor, amount and payout method. */}
+              <FeeBar
+                label="Industry average"
+                feePct={BENCHMARK_FEE_PCT}
+                amount={numericAmount}
+                color="var(--color-coral)"
+              />
               <FeeBar label="RemitChain" feePct={0.1} amount={numericAmount} color="var(--color-mint)" />
+              <p className="text-[11px] mt-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                Industry average from the World Bank&apos;s Remittance Prices Worldwide
+                (global average, USD 200).
+              </p>
             </motion.div>
           )}
 
@@ -722,7 +744,7 @@ export default function SendPage() {
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--color-coral)' }} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium" style={{ color: 'var(--color-coral)' }}>{sendError}</p>
-                  {sendError.includes('balance') && (
+                  {sendError.includes('balance') && !IS_PRODUCTION_CHAIN && (
                     <Link href="/faucet" className="text-xs font-semibold mt-1 inline-block underline"
                       style={{ color: 'var(--color-coral)' }}>
                       Get 100 test QUSD →
@@ -751,7 +773,7 @@ interface FeeBarProps {
 
 function FeeBar({ label, feePct, amount, color }: FeeBarProps) {
   const feeAmount = (amount * feePct) / 100
-  const widthPct = Math.min((feePct / 6) * 100, 100)
+  const widthPct = Math.min((feePct / BENCHMARK_FEE_PCT) * 100, 100)
 
   return (
     <div className="mb-2">
@@ -767,7 +789,7 @@ function FeeBar({ label, feePct, amount, color }: FeeBarProps) {
         role="progressbar"
         aria-valuenow={feePct}
         aria-valuemin={0}
-        aria-valuemax={6}
+        aria-valuemax={BENCHMARK_FEE_PCT}
         aria-label={`${label} fee: ${feePct}%`}
       >
         <motion.div

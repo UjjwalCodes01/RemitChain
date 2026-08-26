@@ -50,6 +50,7 @@ import {
 import { parsePhone, phoneHashMatches } from '@/lib/phone'
 import { getCorridorByIndex, validateDestination } from '@/lib/corridors'
 import { db, transfers } from '@/lib/db'
+import { encryptSecret } from '@/lib/crypto/secretbox'
 import { enqueuePayout, getPayoutForTransfer, submitPayout, toPublicPayout } from '@/lib/payouts/ledger'
 import { checkOtpLock, recordOtpFailure, clearOtpAttempts } from '@/lib/otp-guard'
 import { rateLimit } from '@/lib/ratelimit'
@@ -57,6 +58,9 @@ import { clientIp, log, shortId } from '@/lib/http'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// Broadcasts a transaction and waits for its receipt, then submits a payout.
+// The Vercel default (10s Hobby / 15s Pro) is far too short for that.
+export const maxDuration = 60
 
 /** Relayer must hold at least this much gas before we attempt a claim. */
 const MIN_RELAYER_BALANCE_WEI = 10_000_000_000_000_000n // 0.01 QIE
@@ -224,6 +228,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: destination.error }, { status: 400 })
   }
 
+  // ── Record where the money is going, BEFORE anything is broadcast ────────
+  // The escrow is about to release. If this request dies before the payout is
+  // enqueued, this row is the only record of the recipient's destination, and
+  // the payout cron uses it to repair the orphan automatically.
+  await recordPayoutIntent(transferId, destination.value)
+
   // ── Relayer gas ───────────────────────────────────────────────────────────
   try {
     const balance = await publicClient.getBalance({ address: relayerAddress() })
@@ -387,6 +397,31 @@ function resolveOtpReveal(input: ResolveOtpInput): Hex | null {
   }
 
   return null
+}
+
+/**
+ * Persist the recipient's payout destination before the claim is broadcast.
+ *
+ * Best-effort: a failure here must not stop a legitimate claim, it only means
+ * an orphan would need manual recovery rather than automatic repair.
+ */
+async function recordPayoutIntent(transferId: string, destination: string): Promise<void> {
+  if (!db) return
+  try {
+    await db
+      .update(transfers)
+      .set({
+        payoutDestinationEnc: encryptSecret(destination),
+        payoutIntentAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+      .where(eq(transfers.id, transferId))
+  } catch (err) {
+    log('warn', 'claim.intent_record_failed', {
+      transferId: shortId(transferId),
+      err: String(err).slice(0, 200),
+    })
+  }
 }
 
 interface SettlementInput {

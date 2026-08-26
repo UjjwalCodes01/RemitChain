@@ -17,11 +17,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { IS_PRODUCTION_CHAIN } from '@/lib/env'
 import {
   findOrphanedClaims,
+  repairOrphanedClaim,
   runPayoutReconciler,
   runPayoutWorker,
-  logPayout,
 } from '@/lib/payouts/ledger'
 import { authenticateCron, log } from '@/lib/http'
 
@@ -37,7 +38,14 @@ export async function GET(req: NextRequest) {
   }
 
   const started = Date.now()
-  const report = { repaired: 0, orphansFound: 0, submitted: 0, reconciled: 0, escalated: 0 }
+  const report = {
+    orphansFound: 0,
+    repaired: 0,
+    needsHuman: 0,
+    submitted: 0,
+    reconciled: 0,
+    escalated: 0,
+  }
 
   try {
     // ── 1. Repair orphaned claims ──────────────────────────────────────────
@@ -45,18 +53,11 @@ export async function GET(req: NextRequest) {
     report.orphansFound = orphans.length
 
     for (const orphan of orphans) {
-      // A payout needs a destination, and the recipient supplied theirs during
-      // the claim request that crashed — so it is not recoverable here. Log it
-      // loudly for an operator: the recipient is owed money and the system
-      // cannot work out where to send it without asking them again.
-      logPayout('error', 'payout.orphaned_claim', {
-        transferId: `${orphan.id.slice(0, 10)}…`,
-        corridor: orphan.corridor,
-        netAmount: orphan.netAmount ?? orphan.amount,
-        claimedAt: orphan.claimedAt,
-        action: 'Contact the recipient for payout details and create the payout manually',
-      })
-      report.repaired++
+      // The destination was recorded before the claim was broadcast, so most
+      // orphans repair themselves here with no human involved.
+      const outcome = await repairOrphanedClaim(orphan, IS_PRODUCTION_CHAIN)
+      if (outcome === 'repaired') report.repaired++
+      else report.needsHuman++
     }
 
     // ── 2. Submit due payouts ──────────────────────────────────────────────

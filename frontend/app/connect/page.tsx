@@ -11,7 +11,7 @@ import { useQUSDBalance } from '@/hooks/useQUSDBalance'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { NavBar } from '@/components/NavBar'
 import { activeChain } from '@/lib/chains'
-import { env } from '@/lib/env'
+import { env, IS_PRODUCTION_CHAIN } from '@/lib/env'
 export default function ConnectPage() {
   const router = useRouter()
   const { address, isConnected } = useAccount()
@@ -26,6 +26,8 @@ export default function ConnectPage() {
   // Auto-fund: silently drip 100 QUSD when user connects with 0 balance
   useEffect(() => {
     if (
+      // Never auto-request a faucet drip on a chain where tokens have value.
+      !IS_PRODUCTION_CHAIN &&
       isConnected &&
       !wrongChain &&
       address &&
@@ -293,7 +295,7 @@ export default function ConnectPage() {
                   </span>
                 )}
               </StatusRow>
-              {isConnected && !balanceLoading && balance === '0.00' && (
+              {!IS_PRODUCTION_CHAIN && isConnected && !balanceLoading && balance === '0.00' && (
                 <Link href="/faucet"
                   className="mt-3 flex items-center justify-center gap-2 h-10 rounded-xl text-sm font-semibold border w-full"
                   style={{ background: 'var(--color-mint-dim)', borderColor: 'var(--color-mint-glow)', color: 'var(--color-mint)' }}>

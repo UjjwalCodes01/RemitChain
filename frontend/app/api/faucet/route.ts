@@ -2,13 +2,20 @@
  * app/api/faucet/route.ts
  * POST /api/faucet  { address: "0x..." }
  *
- * Drips 100 testnet QUSD to a wallet address.
- * Rate-limited to 1 drip per address per 24h via Redis.
- * Falls back to in-memory rate-limit when Redis is absent.
+ * Drips 100 TESTNET QUSD to a wallet address so people can try the product.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TESTNET ONLY — HARD GATE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This endpoint transfers real tokens out of the relayer's balance. It was
+ * previously reachable on ANY chain, including QIE mainnet, where it would have
+ * given away 100 real QUSD to anybody who asked. The per-address 24h rate limit
+ * is no defence at all — an attacker generates a fresh address per request and
+ * drains the relayer.
+ *
+ * It now refuses outright on a production chain.
  *
  * SECURITY: uses RELAYER_PRIVATE_KEY to call QUSD.transfer().
- * The relayer must hold testnet QUSD.
- * (Mint 10,000 QUSD to relayer manually or via MockQUSD.mint().)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -17,6 +24,7 @@ import { createWalletClient, createPublicClient, http, parseUnits } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { getRedis } from '@/lib/db/redis'
 import { QUSD_ADDRESS } from '@/lib/contracts'
+import { IS_PRODUCTION_CHAIN } from '@/lib/env'
 
 // Minimal ERC-20 ABI for faucet — only the functions we call
 const ERC20TransferAbi = [
@@ -47,6 +55,14 @@ const addrSchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
+  // A faucet on a chain where tokens have value is a giveaway, not a faucet.
+  if (IS_PRODUCTION_CHAIN) {
+    return NextResponse.json(
+      { error: 'The faucet is only available on test networks.' },
+      { status: 404 },
+    )
+  }
+
   let body: unknown
   try { body = await req.json() }
   catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }

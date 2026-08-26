@@ -28,6 +28,8 @@ import { log, shortId } from '@/lib/http'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// Waits for the send transaction's receipt, then delivers the notification.
+export const maxDuration = 60
 
 const confirmSchema = z.object({
   transferId: z.string().regex(/^0x[a-fA-F0-9]{64}$/),

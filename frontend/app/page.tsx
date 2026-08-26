@@ -5,6 +5,10 @@ import { LiquidNumberPreview } from '@/components/LiquidNumberPreview'
 import { CorridorStrip } from '@/components/CorridorStrip'
 import { NavBar } from '@/components/NavBar'
 import { activeChain } from '@/lib/chains'
+import { REMITCHAIN_ADDRESS, KYC_REGISTRY_ADDRESS } from '@/lib/contracts'
+
+/** Explorer for whichever chain this deployment targets. */
+const explorerBase = activeChain.blockExplorers?.default.url ?? 'https://mainnet.qie.digital'
 
 export const metadata: Metadata = {
   title: 'RemitChain — Send money home. Not 5% of it.',
@@ -121,7 +125,7 @@ export default function LandingPage() {
         >
           {[
             { icon: Shield, label: 'On-chain escrow. Funds can\'t disappear.' },
-            { icon: Zap, label: '0.1% fee — beats every incumbent.' },
+            { icon: Zap, label: '0.1% flat fee — a fraction of the 6.2% global average.' },
             { icon: Globe2, label: 'Gulf · UK · USA corridors.' },
           ].map(({ icon: Icon, label }) => (
             <div key={label} className="flex items-center gap-2">
@@ -236,8 +240,12 @@ export default function LandingPage() {
           <div className="flex items-center gap-4 flex-wrap justify-center">
             <span>Chain ID <span className="font-mono" style={{ color: 'var(--color-text-secondary)' }}>{activeChain.id}</span></span>
             <span>·</span>
+            {/* Addresses come from lib/contracts.ts, not from literals here.
+                These were hard-coded to the May 2026 mainnet deployment, so
+                after any redeployment the footer would have linked visitors to
+                a dead contract while the app used a different one. */}
             <a
-              href="https://mainnet.qie.digital/address/0x56c650167e2D3a20A1131bC3b9e23449bC604AEa"
+              href={`${explorerBase}/address/${REMITCHAIN_ADDRESS}`}
               target="_blank"
               rel="noopener noreferrer"
               className="font-mono hover:text-[var(--color-mint)] transition-colors"
@@ -247,7 +255,7 @@ export default function LandingPage() {
             </a>
             <span>·</span>
             <a
-              href="https://mainnet.qie.digital/address/0xaab80c35136e336f3d0fcf113bd1a092bf206832"
+              href={`${explorerBase}/address/${KYC_REGISTRY_ADDRESS}`}
               target="_blank"
               rel="noopener noreferrer"
               className="font-mono hover:text-[var(--color-mint)] transition-colors"

@@ -38,6 +38,8 @@ import { clientIp, log } from '@/lib/http'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// Signs and broadcasts verifyUser(), then waits for the receipt.
+export const maxDuration = 60
 
 const upgradeSchema = z.object({
   userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Must be a valid EVM address'),

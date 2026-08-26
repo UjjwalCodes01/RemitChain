@@ -5,10 +5,16 @@ import { motion, AnimatePresence } from 'motion/react'
 import { Droplets, CheckCircle2, AlertCircle, Loader2, ExternalLink, Zap } from 'lucide-react'
 import { useAccount } from 'wagmi'
 import Link from 'next/link'
+import { notFound } from 'next/navigation'
 import { NavBar } from '@/components/NavBar'
-import type { Metadata } from 'next'
+import { IS_PRODUCTION_CHAIN } from '@/lib/env'
 
 export default function FaucetPage() {
+  // The faucet gives tokens away. On a chain where they have value that is a
+  // giveaway, not an onboarding aid — the API refuses too, so this page would
+  // only ever show an error.
+  if (IS_PRODUCTION_CHAIN) notFound()
+
   const { address: connectedAddress } = useAccount()
   const [inputAddress, setInputAddress] = useState(connectedAddress ?? '')
   const [state, setState] = useState<'idle' | 'loading' | 'success' | 'ratelimit' | 'error'>('idle')
@@ -217,7 +223,7 @@ export default function FaucetPage() {
                 </button>
 
                 <p className="text-xs mt-4" style={{ color: 'var(--color-text-tertiary)' }}>
-                  Built on QIE Mainnet. QUSD is a demo stablecoin for the hackathon.
+                  Test tokens on the QIE test network. They carry no value and cannot be redeemed.
                 </p>
               </motion.div>
             )}

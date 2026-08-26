@@ -9,6 +9,7 @@ import Link from 'next/link'
 import { useQUSDBalance } from '@/hooks/useQUSDBalance'
 import { useKYCStatus } from '@/hooks/useKYCStatus'
 import { useTransferHistory, statusLabel, payoutLabel, formatQusd } from '@/hooks/useTransferHistory'
+import { IS_PRODUCTION_CHAIN } from '@/lib/env'
 import { KYCBadge } from '@/components/ui/KYCBadge'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { NavBar } from '@/components/NavBar'
@@ -107,8 +108,8 @@ export default function DashboardPage() {
           )}
         </motion.div>
 
-        {/* ── Zero-balance faucet nudge ── */}
-        {!balanceLoading && balanceRaw === 0n && (
+        {/* ── Zero-balance faucet nudge (test networks only) ── */}
+        {!IS_PRODUCTION_CHAIN && !balanceLoading && balanceRaw === 0n && (
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}

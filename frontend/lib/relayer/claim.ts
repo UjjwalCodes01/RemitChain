@@ -136,10 +136,15 @@ export async function buildAndBroadcastClaim(params: ClaimParams): Promise<Claim
 
   const txHash = await walletClient.writeContract(request)
 
+  // This wait must finish well inside the route's `maxDuration`. If the
+  // function is killed here the escrow may still release, which is exactly the
+  // orphan case `payoutDestinationEnc` + the payout cron exist to repair — but
+  // the recipient sees an error for a claim that actually worked, so keep the
+  // budget comfortably under the 60s function limit.
   const receipt = await publicClient.waitForTransactionReceipt({
     hash: txHash,
     confirmations: 1,
-    timeout: 120_000,
+    timeout: 40_000,
   })
 
   if (receipt.status !== 'success') {

@@ -24,7 +24,10 @@ interface StatsResponse {
   claimRate: number
   smsRate: number
   offrampRate: number
-  feeSavedVsWUUSDC: number
+  feeSavedVsBenchmarkUSDC: number
+  benchmarkFeePct: number
+  benchmarkSource: string
+  ourFeePct: number
   activeCorridor: string | null
   corridorBreakdown: { corridor: string; label: string; count: number; volumeUSDC: number }[]
   recentTransfers: { id: string; amount: string; corridor: string; status: number; statusLabel: string; createdAt: number | null }[]
@@ -227,7 +230,7 @@ export function StatsClient() {
                 sub="Distinct wallet addresses"
               />
               <StatCard icon={TrendingUp} label="Saved vs WU" delay={0.15}
-                value={<AnimatedNumber value={s?.feeSavedVsWUUSDC ?? 0} decimals={2} prefix="$" />}
+                value={<AnimatedNumber value={s?.feeSavedVsBenchmarkUSDC ?? 0} decimals={2} prefix="$" />}
                 sub="4.4% less than 4.5% WU fee"
                 color="var(--color-mint)"
               />
@@ -242,14 +245,23 @@ export function StatsClient() {
               style={{ background: 'var(--color-mint-dim)', borderColor: 'var(--color-mint-glow)' }}
             >
               <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--color-mint)' }}>
-                Cumulative fees saved vs Western Union
+                Cumulative fees saved vs the global average
               </p>
               <div className="text-5xl font-bold tabular-nums mb-1" style={{ color: 'var(--color-mint)', fontFamily: 'var(--font-mono)' }}>
-                <AnimatedNumber value={s?.feeSavedVsWUUSDC ?? 0} decimals={2} prefix="$" />
+                <AnimatedNumber value={s?.feeSavedVsBenchmarkUSDC ?? 0} decimals={2} prefix="$" />
               </div>
+              {/* State the assumption and its source inline. A "fees saved"
+                  figure is only meaningful next to the baseline it assumes. */}
               <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                WU charges 4.5% · We charge 0.1% · You keep 4.4%
+                {s
+                  ? `Industry average ${(s.benchmarkFeePct * 100).toFixed(1)}% · RemitChain ${(s.ourFeePct * 100).toFixed(1)}%`
+                  : 'Comparison against the published industry average'}
               </p>
+              {s?.benchmarkSource && (
+                <p className="text-[11px] mt-1.5" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Source: {s.benchmarkSource}
+                </p>
+              )}
             </motion.div>
 
             {/* ── Funnel ── */}
