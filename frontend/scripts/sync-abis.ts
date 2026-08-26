@@ -28,13 +28,18 @@ const NETWORKS = [
 ] as const
 
 /**
- * Placeholder used only when contracts/deployments/qie_mainnet.json is absent.
- * The real value always comes from the deployment file.
+ * QUSDC on QIE mainnet. Used when contracts/deployments/qie_mainnet.json is
+ * absent; otherwise the deployment file wins.
  *
- * Deliberately NOT described as "the canonical stablecoin" — that has to be
- * verified on-chain before a launch, and the generator has no way to check it.
+ * Verified on-chain 2026-08-26: symbol QUSDC, 6 decimals, 67 holders, verified
+ * source, AccessControl mint/burn via VAULT_ROLE. No EIP-2612 permit.
  */
 const MAINNET_QUSD_PLACEHOLDER = '0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5'
+
+/** Tokens confirmed suitable for mainnet settlement, keyed lower-case. */
+const KNOWN_GOOD_TOKENS: Record<string, string> = {
+  '0x3f43da82ec9a4f5285f10faf1f26eca7319e5da5': 'QUSDC — 6 decimals, verified, vault-redeemable',
+}
 
 /**
  * Known test tokens. If a deployment points at one of these on mainnet the
@@ -236,15 +241,24 @@ function main(): void {
   // of the truth.
   const mainnetToken = networkData[1990].qusd.toLowerCase()
   const testTokenWarning = KNOWN_TEST_TOKENS[mainnetToken]
+  const knownGood = KNOWN_GOOD_TOKENS[mainnetToken]
   const mainnetTokenNote = testTokenWarning
     ? ` // WARNING: ${testTokenWarning}`
-    : ''
+    : knownGood
+      ? ` // ${knownGood}`
+      : ' // UNRECOGNISED — verify this token on-chain before launch'
 
   if (testTokenWarning) {
     console.log('')
     console.warn(`  ⚠ MAINNET TOKEN IS A TEST TOKEN: ${testTokenWarning}`)
     console.warn('    Real value cannot be settled against it. Redeploy against the')
     console.warn('    real stablecoin before launch — see LAUNCH.md §1.')
+  } else if (knownGood) {
+    console.log(`  ✓ mainnet token: ${knownGood}`)
+  } else if (networkData[1990].deployed) {
+    console.log('')
+    console.warn(`  ⚠ Mainnet token ${networkData[1990].qusd} is not on the known-good list.`)
+    console.warn('    Verify its decimals and redemption path before launch.')
   }
 
   // Write contracts.ts with the chain-keyed address map

@@ -37,12 +37,66 @@ It is a fine test token and it cannot carry value. `QUSD` is immutable in both
 `EscrowVault` and `RemitChain`, so pointing at the real stablecoin means a
 **redeployment**. There is no way around this.
 
-### 1.1 Decide the real token
+### 1.1 The real token — RESOLVED
 
-Confirm with QIE which contract is the canonical, redeemable USD stablecoin on
-chain 1990, and confirm it has 6 decimals. `contracts/.env.example` currently
-suggests `0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5` — verify that on-chain
-before trusting it.
+Verified against the QIE mainnet explorer and Blockscout API on 2026-08-26.
+
+**Use QUSDC — `0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5`**
+
+| | |
+|---|---|
+| Symbol / name | QUSDC |
+| Decimals | **6** — matches `MIN_AMOUNT` and the fee arithmetic |
+| Holders | 67 — the most-held stablecoin on the chain |
+| Total supply | 10,714.677 QUSDC (~$10.7k) |
+| Exchange rate | 1.0 |
+| Contract | Verified, Solidity 0.8.20 |
+| Mint / burn | AccessControl, `VAULT_ROLE` — a vault mints on deposit and burns on redemption, which is the shape a redeemable stablecoin needs |
+| EIP-2612 | **Not implemented** — no `permit`, `nonces` or `DOMAIN_SEPARATOR` |
+
+This is already the value in `contracts/.env.example`, and `pnpm sync:abis` now
+recognises it and confirms it in its output.
+
+**Do not use `0x9b5D310a92F05C3714E4163e43f226c7A6FB0827`** ("QIE USD" / QUSD).
+That is the MockQUSD this project deployed for testing — 4 holders,
+owner-mintable, no redemption path. It is what mainnet is currently wired to,
+and the deploy script rejects it on chain 1990.
+
+Two consequences worth knowing before you commit:
+
+- **`sendRemittanceWithPermit` has been removed.** Its TODO asked whether QUSD
+  implements EIP-2612; QUSDC does not, so the function could only ever revert
+  while still presenting a reachable entry point that took a user signature.
+  Senders use approve + `sendRemittance`.
+- **Total supply is about $10.7k across 67 holders.** That is the entire float
+  on the chain today. It bounds how much volume you can settle and how much a
+  single transfer can be — size your launch limits against it, and talk to QIE
+  about minting capacity before you market the service.
+
+### 1.1b Check the RPC from your own network
+
+Both endpoints the app is configured against refused connections during this
+review, while the explorer on the same domain responded normally:
+
+```
+rpc1mainnet.qie.digital  146.190.8.172   connection refused
+rpc2mainnet.qie.digital  174.138.121.210 connection refused
+mainnet.qie.digital      146.190.9.14    HTTP 200
+```
+
+That may be egress filtering on the reviewing machine rather than an outage, so
+verify it yourself before drawing conclusions:
+
+```bash
+curl -s -X POST https://rpc1mainnet.qie.digital/ \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
+```
+
+If it does not return a block number, **nothing works** — every read, every
+send and every claim goes through that URL. Get a working endpoint from QIE
+before going further. (`rpc.qie.digital` responds but is not an EVM JSON-RPC
+endpoint; it returns "Method not found" for `eth_*`.)
 
 ### 1.2 Set up custody
 

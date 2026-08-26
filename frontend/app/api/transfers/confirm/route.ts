@@ -25,6 +25,7 @@ import { deliverClaimNotification } from '@/lib/notify/deliver'
 import { getRedis } from '@/lib/db/redis'
 import { rateLimit } from '@/lib/ratelimit'
 import { log, shortId } from '@/lib/http'
+import { rpcTransport } from '@/lib/rpc'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Verify the transaction on-chain ────────────────────────────────────────
-  const publicClient = createPublicClient({ chain: serverChain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
+  const publicClient = createPublicClient({ chain: serverChain, transport: rpcTransport() })
 
   let receipt
   try {

@@ -43,6 +43,7 @@ const ERC20TransferAbi = [
 ] as const
 
 import { serverChain, RPC_URL } from '@/lib/chain-config'
+import { rpcTransport } from '@/lib/rpc'
 
 const DRIP_AMOUNT = parseUnits('100', 6) // 100 QUSD
 const COOLDOWN_SECONDS = 24 * 60 * 60   // 24 hours
@@ -101,8 +102,8 @@ export async function POST(req: NextRequest) {
   }
 
   const account = privateKeyToAccount(pk)
-  const walletClient = createWalletClient({ account, chain: serverChain, transport: http(RPC_URL) })
-  const publicClient = createPublicClient({ chain: serverChain, transport: http(RPC_URL) })
+  const walletClient = createWalletClient({ account, chain: serverChain, transport: rpcTransport() })
+  const publicClient = createPublicClient({ chain: serverChain, transport: rpcTransport() })
 
   // Check relayer QUSD balance
   try {

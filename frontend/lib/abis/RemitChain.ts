@@ -372,60 +372,6 @@ export const RemitChainAbi = [
   },
   {
     "type": "function",
-    "name": "sendRemittanceWithPermit",
-    "inputs": [
-      {
-        "name": "recipientPhoneHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "otpCommitHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "corridor",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "permitDeadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "v",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "r",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "s",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "transferId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "senderNonces",
     "inputs": [
       {

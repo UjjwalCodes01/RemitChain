@@ -39,6 +39,7 @@ import {
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
+import { rpcTransport } from '@/lib/rpc'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -47,7 +48,8 @@ export interface ClaimParams {
   otpReveal: Hex
   relayerPrivateKey: Hex
   relayerAddress: Hex
-  rpcUrl: string
+  /** Pin a specific endpoint. Omit to use the configured failover list. */
+  rpcUrl?: string
   chain: Chain
 }
 
@@ -93,8 +95,12 @@ export async function buildAndBroadcastClaim(params: ClaimParams): Promise<Claim
     throw new Error('Relayer private key does not match the configured relayer address')
   }
 
-  const publicClient = createPublicClient({ chain, transport: http(rpcUrl) })
-  const walletClient = createWalletClient({ account, chain, transport: http(rpcUrl) })
+  // `rpcUrl` is kept in the signature for callers that need to pin an endpoint,
+  // but the default path uses the failover transport: broadcasting a claim
+  // against a single node means one unreachable host stops every claim.
+  const transport = rpcUrl ? http(rpcUrl, { retryCount: 2, timeout: 15_000 }) : rpcTransport()
+  const publicClient = createPublicClient({ chain, transport })
+  const walletClient = createWalletClient({ account, chain, transport })
 
   // Replay protection for the EIP-712 payload — increments on every claim.
   const nonce = (await publicClient.readContract({

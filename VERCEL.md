@@ -49,7 +49,8 @@ cd frontend && pnpm gen:secrets
 | Variable | Value / how to get it |
 |---|---|
 | `NEXT_PUBLIC_CHAIN_ID` | `1990` |
-| `NEXT_PUBLIC_RPC_URL` | `https://rpc1mainnet.qie.digital/` |
+| `NEXT_PUBLIC_RPC_URL` | `https://rpc1mainnet.qie.digital/` — **confirm it answers `eth_blockNumber` first** |
+| `NEXT_PUBLIC_RPC_URLS` | Comma-separated fallbacks, e.g. `https://rpc2mainnet.qie.digital/`. Strongly recommended: one endpoint is a single point of failure for every read, send and claim. |
 | `NEXT_PUBLIC_APP_URL` | `https://your-domain.com` — no trailing slash |
 | `NEXT_PUBLIC_RELAYER_ADDRESS` | The relayer's public address |
 | `RELAYER_PRIVATE_KEY` | The relayer key. **Mark as Sensitive.** |

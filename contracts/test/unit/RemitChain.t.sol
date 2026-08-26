@@ -495,42 +495,10 @@ contract RemitChainTest is BaseTest {
     // =========================================================================
     // Permit variant
     // =========================================================================
-
-    function test_SendRemittanceWithPermit_SingleTx() public {
-        uint256 amount = SEND_AMOUNT;
-        uint256 nonce = remit.senderNonces(sender);
-        bytes32 predictedId = keccak256(abi.encode(sender, nonce, block.chainid, address(remit)));
-        bytes32 otpReveal = bytes32(uint256(777777));
-        bytes32 otpCommitHash = keccak256(abi.encode(otpReveal, predictedId, recipient));
-        bytes32 phoneHash = keccak256(abi.encodePacked(SALT, "+919876543210"));
-
-        // Build EIP-2612 permit signature
-        uint256 permitDeadline = block.timestamp + 1 hours;
-        bytes32 permitHash = keccak256(
-            abi.encodePacked(
-                "\x19\x01",
-                qusd.DOMAIN_SEPARATOR(),
-                keccak256(
-                    abi.encode(
-                        keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"),
-                        sender,
-                        address(vault),
-                        amount,
-                        qusd.nonces(sender),
-                        permitDeadline
-                    )
-                )
-            )
-        );
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(senderPk, permitHash);
-
-        // No prior approval needed — permit handles it
-        vm.prank(sender);
-        bytes32 transferId =
-            remit.sendRemittanceWithPermit(phoneHash, amount, otpCommitHash, 1, permitDeadline, v, r, s);
-
-        assertEq(transferId, predictedId);
-        assertEq(uint8(remit.getTransferStatus(transferId)), uint8(IRemitChain.Status.PENDING));
-        assertEq(vault.lockedBalance(transferId), amount);
-    }
+    // EIP-2612 permit path — REMOVED
+    // =========================================================================
+    // `sendRemittanceWithPermit` no longer exists. QUSDC on QIE mainnet
+    // (0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5) implements no `permit`,
+    // `nonces` or `DOMAIN_SEPARATOR`, so the function could only ever revert.
+    // Senders use approve + sendRemittance, which the tests above cover.
 }

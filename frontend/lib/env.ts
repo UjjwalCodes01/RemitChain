@@ -27,6 +27,13 @@ const publicSchema = z.object({
 
   NEXT_PUBLIC_RPC_URL: z.string().url().default('https://rpc1mainnet.qie.digital/'),
 
+  /**
+   * Additional RPC endpoints, comma-separated, tried in order when the primary
+   * fails. Every read, send and claim goes through the chain RPC, so a single
+   * endpoint is a single point of failure for the whole product.
+   */
+  NEXT_PUBLIC_RPC_URLS: z.string().optional().or(z.literal('').transform(() => undefined)),
+
   NEXT_PUBLIC_WC_PROJECT_ID: z.string().optional(),
 
   /**
@@ -56,6 +63,7 @@ function parsePublicEnv() {
   const parsed = publicSchema.safeParse({
     NEXT_PUBLIC_CHAIN_ID: process.env.NEXT_PUBLIC_CHAIN_ID,
     NEXT_PUBLIC_RPC_URL: process.env.NEXT_PUBLIC_RPC_URL,
+    NEXT_PUBLIC_RPC_URLS: process.env.NEXT_PUBLIC_RPC_URLS,
     NEXT_PUBLIC_WC_PROJECT_ID: process.env.NEXT_PUBLIC_WC_PROJECT_ID,
     NEXT_PUBLIC_RELAYER_ADDRESS: process.env.NEXT_PUBLIC_RELAYER_ADDRESS,
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,

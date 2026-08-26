@@ -23,6 +23,7 @@ import { ChainStatus } from '@/lib/relayer/claim'
 import { deliverClaimNotification } from '@/lib/notify/deliver'
 import { rateLimit } from '@/lib/ratelimit'
 import { clientIp, log, shortId } from '@/lib/http'
+import { rpcTransport } from '@/lib/rpc'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -61,7 +62,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   // Only a pending transfer can be resent.
   try {
-    const publicClient = createPublicClient({ chain: serverChain, transport: http(RPC_URL) })
+    const publicClient = createPublicClient({ chain: serverChain, transport: rpcTransport() })
     const transfer = (await publicClient.readContract({
       address: REMITCHAIN_ADDRESS,
       abi: RemitChainAbi,

@@ -10,6 +10,11 @@
  */
 
 const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? '1990')
+/**
+ * Primary endpoint. Prefer `rpcTransport()` from lib/rpc.ts, which fails over
+ * across every endpoint in NEXT_PUBLIC_RPC_URLS — a single node going down
+ * otherwise stops every read, send and claim.
+ */
 const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL ?? 'https://rpc1mainnet.qie.digital/'
 const IS_MAINNET = CHAIN_ID === 1990
 

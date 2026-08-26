@@ -18,6 +18,7 @@ import { serverChain, RPC_URL } from '@/lib/chain-config'
 import { getCorridorById, getCorridorByIndex } from '@/lib/corridors'
 import { getPayoutForTransfer, toPublicPayout } from '@/lib/payouts/ledger'
 import { ChainStatus } from '@/lib/relayer/claim'
+import { rpcTransport } from '@/lib/rpc'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -52,7 +53,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     db
       ? db.select().from(transfers).where(eq(transfers.id, transferId)).limit(1)
       : Promise.resolve([]),
-    createPublicClient({ chain: serverChain, transport: http(RPC_URL) }).readContract({
+    createPublicClient({ chain: serverChain, transport: rpcTransport() }).readContract({
       address: REMITCHAIN_ADDRESS,
       abi: RemitChainAbi,
       functionName: 'getTransfer',

@@ -35,6 +35,7 @@ import { KYC_REGISTRY_ADDRESS, KYCRegistryAbi } from '@/lib/contracts'
 import { serverChain } from '@/lib/chain-config'
 import { rateLimit } from '@/lib/ratelimit'
 import { clientIp, log } from '@/lib/http'
+import { rpcTransport } from '@/lib/rpc'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -105,8 +106,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const account = privateKeyToAccount(relayerPrivateKey())
-    const publicClient = createPublicClient({ chain: serverChain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
-    const walletClient = createWalletClient({ account, chain: serverChain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
+    const publicClient = createPublicClient({ chain: serverChain, transport: rpcTransport() })
+    const walletClient = createWalletClient({ account, chain: serverChain, transport: rpcTransport() })
 
     // Read user's current KYC level — don't downgrade
     const currentLevel = await publicClient.readContract({

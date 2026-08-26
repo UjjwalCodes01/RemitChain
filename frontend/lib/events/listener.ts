@@ -31,6 +31,7 @@ import { REMITCHAIN_ADDRESS, DEPLOYMENT_BLOCKS } from '@/lib/contracts'
 // ── Chain definition (server-only) ────────────────────────────────────────────
 
 import { env } from '@/lib/env'
+import { rpcTransport } from '@/lib/rpc'
 
 const RPC_URL = env.NEXT_PUBLIC_RPC_URL
 const CHAIN_ID = env.NEXT_PUBLIC_CHAIN_ID
@@ -44,7 +45,7 @@ export function getPublicClient(): PublicClient {
       nativeCurrency: { name: 'QIE', symbol: 'QIE', decimals: 18 },
       rpcUrls: { default: { http: [RPC_URL] } },
     } as const,
-    transport: http(RPC_URL),
+    transport: rpcTransport(),
   }) as PublicClient
 }
 

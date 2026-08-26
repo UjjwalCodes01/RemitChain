@@ -55,6 +55,7 @@ import { enqueuePayout, getPayoutForTransfer, submitPayout, toPublicPayout } fro
 import { checkOtpLock, recordOtpFailure, clearOtpAttempts } from '@/lib/otp-guard'
 import { rateLimit } from '@/lib/ratelimit'
 import { clientIp, log, shortId } from '@/lib/http'
+import { rpcTransport } from '@/lib/rpc'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -118,7 +119,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const publicClient = createPublicClient({ chain: serverChain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
+  const publicClient = createPublicClient({ chain: serverChain, transport: rpcTransport() })
 
   // ── Read the authoritative transfer state ─────────────────────────────────
   let transfer: TransferData

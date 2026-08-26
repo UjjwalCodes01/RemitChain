@@ -6,7 +6,6 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {IRemitChain} from "./interfaces/IRemitChain.sol";
@@ -27,6 +26,15 @@ import {TransferId} from "./libraries/TransferId.sol";
 ///   4. `cancelRemittance` is NOT pausable — users can always recover after timeout.
 ///
 /// @custom:security Owner MUST be a TimelockController (min 2-day delay) controlled by a multisig.
+///
+/// @dev `sendRemittanceWithPermit` was removed on 2026-08-26. It carried a TODO to
+///      "Confirm QUSD implements EIP-2612", and that has now been confirmed the
+///      other way: QUSDC on QIE mainnet
+///      (0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5) exposes no `permit`,
+///      `nonces` or `DOMAIN_SEPARATOR` — it is an AccessControl mint/burn token.
+///      The function could therefore only ever revert, while still presenting a
+///      reachable entry point that took a signature from the user. Senders use
+///      approve + `sendRemittance`.
 contract RemitChain is IRemitChain, Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
     using SafeERC20 for IERC20;
     using ECDSA for bytes32;
@@ -242,69 +250,6 @@ contract RemitChain is IRemitChain, Ownable2Step, Pausable, ReentrancyGuard, EIP
 
         // External call last
         vault.refundFunds(transferId, originalSender);
-    }
-
-    // =========================================================================
-    // External — EIP-2612 permit variant (single-tx UX, prevents approval-race)
-    // =========================================================================
-
-    /// @notice Initiates a remittance using EIP-2612 permit for a single-transaction UX.
-    /// @dev    Calls `IERC20Permit.permit` to set the vault's allowance atomically, then
-    ///         proceeds identically to `sendRemittance`. This eliminates the approval-race
-    ///         attack vector where a front-runner could exploit a pending approval tx.
-    ///
-    ///         // TODO(qie): Confirm QUSD implements EIP-2612. If not, remove this function
-    ///         //             and document that users must approve separately.
-    ///
-    /// @param recipientPhoneHash See `sendRemittance`.
-    /// @param amount             See `sendRemittance`.
-    /// @param otpCommitHash      See `sendRemittance`.
-    /// @param corridor           See `sendRemittance`.
-    /// @param permitDeadline     EIP-2612 permit deadline.
-    /// @param v                  Permit signature component.
-    /// @param r                  Permit signature component.
-    /// @param s                  Permit signature component.
-    /// @return transferId        Unique identifier for this transfer.
-    function sendRemittanceWithPermit(
-        bytes32 recipientPhoneHash,
-        uint256 amount,
-        bytes32 otpCommitHash,
-        uint8 corridor,
-        uint256 permitDeadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external nonReentrant whenNotPaused returns (bytes32 transferId) {
-        if (amount < MIN_AMOUNT) revert AmountBelowMinimum(amount, MIN_AMOUNT);
-
-        // Apply permit — sets vault's allowance atomically. Safe to call even if permit was
-        // already granted (it will simply overwrite with the same or higher allowance).
-        IERC20Permit(address(QUSD)).permit(msg.sender, address(vault), amount, permitDeadline, v, r, s);
-
-        // KYC check + consume daily limit
-        kyc.checkAndConsume(msg.sender, amount);
-
-        // Generate transferId
-        transferId = TransferId.generate(msg.sender, senderNonces[msg.sender]++, block.chainid, address(this));
-
-        // forge-lint: disable-next-line(unsafe-typecast)
-        // Safe: block.timestamp + 48h << type(uint64).max (year ~292 billion)
-        uint64 expiry = uint64(block.timestamp + CLAIM_WINDOW);
-
-        // CEI: write state before external calls
-        transfers[transferId] = Transfer({
-            sender: msg.sender,
-            recipientPhoneHash: recipientPhoneHash,
-            otpCommitHash: otpCommitHash,
-            amount: amount,
-            expiry: expiry,
-            corridor: corridor,
-            status: Status.PENDING
-        });
-
-        emit TransferInitiated(transferId, msg.sender, recipientPhoneHash, amount, expiry, corridor);
-
-        vault.lockFunds(transferId, msg.sender, amount);
     }
 
     // =========================================================================

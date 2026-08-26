@@ -2,6 +2,7 @@ import { createConfig, http, createStorage, cookieStorage } from 'wagmi'
 import { injected, walletConnect } from 'wagmi/connectors'
 import { qieTestnet, qieMainnet, activeChain } from './chains'
 import { env } from '@/lib/env'
+import { rpcTransport } from '@/lib/rpc'
 
 // Safely build connectors — WalletConnect can throw if projectId is missing or
 // the internal session cache is empty on first load (Object.values on null).
@@ -42,17 +43,16 @@ export const wagmiConfig = createConfig({
   ssr: true,
   storage: createStorage({ storage: cookieStorage }),
   transports: {
-    // Both chains configured but we only supply RPC URL if it matches the active chain.
-    [qieTestnet.id]: http(
+    // The active chain uses the configured failover list; the inactive one keeps
+    // a sensible default so a wallet on the wrong network still reads.
+    [qieTestnet.id]:
       env.NEXT_PUBLIC_CHAIN_ID === qieTestnet.id
-        ? env.NEXT_PUBLIC_RPC_URL
-        : 'https://rpc1testnet.qie.digital/',
-    ),
-    [qieMainnet.id]: http(
+        ? rpcTransport()
+        : http('https://rpc1testnet.qie.digital/'),
+    [qieMainnet.id]:
       env.NEXT_PUBLIC_CHAIN_ID === qieMainnet.id
-        ? env.NEXT_PUBLIC_RPC_URL
-        : 'https://rpc1mainnet.qie.digital/',
-    ),
+        ? rpcTransport()
+        : http('https://rpc1mainnet.qie.digital/'),
   },
 })
 

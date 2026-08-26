@@ -43,6 +43,7 @@ import { getRedis } from '@/lib/db/redis'
 import { rateLimit } from '@/lib/ratelimit'
 import { clientIp, log } from '@/lib/http'
 import { screenTransfer } from '@/lib/compliance/screening'
+import { rpcTransport } from '@/lib/rpc'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -204,7 +205,7 @@ export async function POST(req: NextRequest) {
     // ── Read the authoritative nonce from chain ─────────────────────────────
     // Never trust a client-supplied nonce: it decides the transferId, and a
     // forged one would let a caller overwrite another sender's prepared row.
-    const publicClient = createPublicClient({ chain: serverChain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
+    const publicClient = createPublicClient({ chain: serverChain, transport: rpcTransport() })
 
     let senderNonce: bigint
     try {
