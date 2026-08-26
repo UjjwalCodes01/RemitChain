@@ -84,13 +84,13 @@ export default function TransferTrackerPage() {
     return () => clearInterval(id)
   }, [expiryMs, currentStage])
 
-  // Trigger a fresh event scan on mount (sub-minute freshness before Vercel cron fires)
-  useEffect(() => {
-    const cronSecret = process.env.NEXT_PUBLIC_CRON_SECRET // empty in prod — that's fine
-    fetch('/api/cron/poll-events', {
-      headers: cronSecret ? { Authorization: `Bearer ${cronSecret}` } : {},
-    }).catch(() => {})
-  }, [transferId])
+  // The tracker previously poked /api/cron/poll-events on mount, passing
+  // `NEXT_PUBLIC_CRON_SECRET` as a bearer token. Two problems: any value set
+  // there would be inlined into the CLIENT bundle, handing every visitor the
+  // credential that drives the payout worker; and with cron auth now strict the
+  // request only ever returned 401, so it was a wasted round trip on every page
+  // load. Freshness comes from /api/transfers/[id], which reads the chain
+  // directly rather than waiting for the event listener.
 
   const { data: transfer, refetch } = useReadContract({
     address: REMITCHAIN_ADDRESS,
