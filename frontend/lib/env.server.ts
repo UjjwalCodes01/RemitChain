@@ -113,14 +113,40 @@ const REQUIRED_ON_PRODUCTION: Array<{ key: keyof ServerEnv; why: string }> = [
   { key: 'OPS_API_TOKEN', why: 'without it the manual payout review queue is unreachable' },
 ]
 
+/**
+ * Is this module being evaluated by `next build` rather than serving a request?
+ *
+ * `next build` imports every route module to collect page data, so anything
+ * thrown at module scope fails the build. Runtime secrets are the wrong thing
+ * to assert there:
+ *
+ *   - The build and the running service are different contexts. A build box
+ *     legitimately has no database URL.
+ *   - It is a chicken-and-egg on a first deploy: you cannot ship the code that
+ *     reads the variables until the variables are set, and you cannot see the
+ *     app to know which ones it wants.
+ *   - Worst of all, it means a misconfiguration cannot be FIXED by deploying,
+ *     because the fix will not build either.
+ *
+ * Presence is therefore enforced at runtime, where it belongs and where it is
+ * far more visible: routes fail closed, `/api/health` returns 503 naming each
+ * missing value, and `pnpm preflight` turns that into a GO/NO-GO before anyone
+ * is told the service is open.
+ *
+ * Shape validation still runs at build, so a malformed key or a bad URL is
+ * caught as early as possible.
+ */
+function isBuildPhase(): boolean {
+  return (
+    process.env.NEXT_PHASE === 'phase-production-build' ||
+    process.env.SKIP_ENV_VALIDATION === 'true'
+  )
+}
+
 function validateServerEnv(): ServerEnv {
   const parsed = serverSchema.safeParse(process.env)
 
-  // CI and container builds legitimately run `next build` with no secrets
-  // present. Parsing still happens so a malformed value is caught; only the
-  // "is it present" requirements are deferred to runtime, where a missing
-  // secret surfaces as a 503 from /api/health rather than a broken deploy.
-  const skipRequirements = process.env.SKIP_ENV_VALIDATION === 'true'
+  const skipRequirements = isBuildPhase()
 
   if (!parsed.success) {
     console.error('Invalid server environment variables:')
@@ -129,6 +155,21 @@ function validateServerEnv(): ServerEnv {
   }
 
   const data = parsed.data
+
+  if (IS_PRODUCTION_CHAIN && skipRequirements) {
+    // Report, but do not throw — the build has to complete so the fix can be
+    // deployed. Kept to a single line: `next build` evaluates this module once
+    // per worker process, and a multi-line block repeated five times reads like
+    // something is looping.
+    const missing = REQUIRED_ON_PRODUCTION.filter(({ key }) => !data[key])
+    if (missing.length > 0) {
+      console.warn(
+        `[env] production build: ${missing.length} required value(s) not set — ` +
+        `${missing.map(m => m.key).join(', ')}. Checked again at runtime; ` +
+        'until they are set /api/health returns 503 and no transfer is accepted.',
+      )
+    }
+  }
 
   if (IS_PRODUCTION_CHAIN && !skipRequirements) {
     const missing = REQUIRED_ON_PRODUCTION.filter(({ key }) => !data[key])

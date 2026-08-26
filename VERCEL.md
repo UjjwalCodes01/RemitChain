@@ -12,7 +12,7 @@ For the wider launch sequence (contracts, provider accounts, compliance) see
 |---|---|---|
 | **Root Directory** | `frontend` | The repo is a monorepo; the Next.js app is not at the root. |
 | **Framework Preset** | Next.js | Auto-detected. |
-| **Build Command** | *(leave default)* | `next build`. Do **not** add `SKIP_ENV_VALIDATION` — you want the build to fail if config is wrong. |
+| **Build Command** | *(leave default)* | `next build`. No `SKIP_ENV_VALIDATION` needed — the build no longer depends on runtime secrets. |
 | **Install Command** | *(leave default)* | `pnpm install --frozen-lockfile`, detected from `pnpm-lock.yaml`. |
 | **Node.js Version** | **22.x** | Pinned by `engines` in `package.json`. |
 | **Region** | Pick one close to your database | Every route hits Neon; cross-region adds latency to money-moving requests. If your Neon project is in `aws-ap-south-1`, use `bom1`. |
@@ -107,9 +107,12 @@ never completes, and the funds sit until they expire.
 
 ### Do not set on production
 
-`ENABLE_SANDBOX_PAYOUTS` and `SKIP_ENV_VALIDATION` must never be set on
-Production. The first is refused at boot; the second would let a misconfigured
-deployment build successfully.
+`ENABLE_SANDBOX_PAYOUTS` must never be set on Production — it is refused at boot.
+
+`SKIP_ENV_VALIDATION` is not needed and should not be set. Builds already
+succeed without runtime secrets; the presence of each one is enforced at
+runtime, where `/api/health` can report exactly what is missing and you can
+deploy a fix.
 
 `ALLOW_LEGACY_OTP_SCHEME` is the one exception, and only during the cutover —
 see LAUNCH.md §6. It must carry an ISO-8601 deadline; `true` is refused at boot.
@@ -198,6 +201,11 @@ into the new payout ledger.
 ---
 
 ## 8. Verify
+
+A deployment that builds is not a deployment that works. The build deliberately
+does **not** require the runtime secrets — otherwise a missing variable would
+mean you could not deploy the fix either — so the first thing to check after a
+green deploy is that the service actually considers itself healthy.
 
 ```bash
 curl -s https://your-domain.com/api/health | jq

@@ -36,6 +36,16 @@ export function isLegacyProvider(id: string): boolean {
 export function assertPayoutConfigSafe(isProductionChain: boolean): void {
   if (!isProductionChain) return
 
+  // `next build` imports every route module, so throwing here would fail the
+  // build rather than the deployment. These are re-checked at runtime, and
+  // /api/health reports them.
+  if (
+    process.env.NEXT_PHASE === 'phase-production-build' ||
+    process.env.SKIP_ENV_VALIDATION === 'true'
+  ) {
+    return
+  }
+
   // Simulated payouts on a production chain would report success to a real
   // user whose real funds have already left escrow.
   if (process.env.ENABLE_SANDBOX_PAYOUTS === 'true') {

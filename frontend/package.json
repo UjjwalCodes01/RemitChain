@@ -13,6 +13,7 @@
     "e2e:local": "tsx scripts/e2e-local.ts",
     "e2e:http": "tsx scripts/e2e-http.ts",
     "preflight": "tsx scripts/preflight.ts",
+    "predeploy:check": "tsx scripts/predeploy-check.ts",
     "gen:secrets": "tsx scripts/gen-secrets.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
