@@ -37,7 +37,32 @@ if (!DATABASE_URL) {
   process.exit(1)
 }
 
-const sql = neon(DATABASE_URL)
+/**
+ * Neon's HTTP driver only reaches Neon-hosted endpoints, so use `pg` for a
+ * local or self-hosted Postgres. Same split as lib/db/index.ts.
+ */
+const isNeon = /\.neon\.tech|\.neon\.build|neon\.database/i.test(DATABASE_URL)
+
+type QueryFn = (text: string, params?: unknown[]) => Promise<unknown>
+
+let sqlQuery: QueryFn
+let closeConnection: () => Promise<void> = async () => {}
+
+if (isNeon) {
+  const neonSql = neon(DATABASE_URL)
+  sqlQuery = (text, params) => neonSql.query(text, params as never)
+} else {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { Pool } = require('pg') as typeof import('pg')
+  const pool = new Pool({
+    connectionString: DATABASE_URL,
+    ssl: /sslmode=require/i.test(DATABASE_URL) ? { rejectUnauthorized: false } : undefined,
+  })
+  sqlQuery = async (text, params) => (await pool.query(text, params as never[])).rows
+  closeConnection = () => pool.end()
+}
+
+const sql = { query: sqlQuery }
 
 async function ensureLedger() {
   await sql.query(`
@@ -129,7 +154,10 @@ async function main() {
   )
 }
 
-main().catch(e => {
-  console.error('Fatal:', e)
-  process.exit(1)
-})
+main()
+  .then(closeConnection)
+  .catch(async e => {
+    console.error('Fatal:', e)
+    await closeConnection()
+    process.exit(1)
+  })

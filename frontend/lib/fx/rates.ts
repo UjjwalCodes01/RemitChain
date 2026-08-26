@@ -84,7 +84,7 @@ const CACHE_KEY = 'fx:usd:v3'
 const SOFT_TTL_MS = 5 * 60 * 1000
 /** Absolute ceiling on the age of a rate backing a binding quote. */
 const DEFAULT_MAX_STALENESS_MS = 60 * 60 * 1000
-const FETCH_TIMEOUT_MS = 6_000
+const FETCH_TIMEOUT_MS = 8_000
 
 /**
  * How old a cached rate may be and still be used to quote a transfer.
@@ -104,6 +104,20 @@ interface CachedRates {
 
 /** Process-local memo so repeated calls in one request skip Redis. */
 let _local: CachedRates | null = null
+
+/**
+ * Single-flight guard.
+ *
+ * `/api/corridors` asks for a rate for all five corridors at once. Without
+ * this, a cold cache produced five concurrent fetches of the same upstream
+ * document — which is not just wasteful: they contend, and any one of them
+ * hitting the abort timeout reports "no rate", which closes that corridor.
+ * The first request after a cold start could therefore close the whole
+ * product for no reason.
+ *
+ * Concurrent callers now await one shared fetch.
+ */
+let _inFlight: Promise<CachedRates | null> | null = null
 
 // ─── Fetching ────────────────────────────────────────────────────────────────
 
@@ -159,6 +173,14 @@ async function loadRates(): Promise<CachedRates | null> {
 
   if (_local && now - _local.fetchedAt < SOFT_TTL_MS) return _local
 
+  // Join the refresh already under way rather than starting another.
+  if (_inFlight) return _inFlight
+
+  _inFlight = refreshRates(now).finally(() => { _inFlight = null })
+  return _inFlight
+}
+
+async function refreshRates(now: number): Promise<CachedRates | null> {
   const cached = await cacheGet<CachedRates>(CACHE_KEY)
   if (cached && now - cached.fetchedAt < SOFT_TTL_MS) {
     _local = cached

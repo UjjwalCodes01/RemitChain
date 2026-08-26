@@ -32,12 +32,35 @@
  */
 
 import { keccak256, encodeAbiParameters, encodePacked, toHex, type Hex } from 'viem'
-// `/max` metadata, not the default `min` bundle. The min bundle cannot tell
-// number TYPES apart and validates loosely, so it accepts strings that are not
-// real allocated ranges. It is ~145KB larger and only ever loaded on the
-// server, which is the right trade when the alternative is quoting a transfer
-// against a phone number that cannot receive anything.
-import { parsePhoneNumberFromString, type CountryCode } from 'libphonenumber-js/max'
+/**
+ * `core` + an explicitly imported metadata document, rather than the
+ * convenience `libphonenumber-js/max` entry point.
+ *
+ * Two reasons:
+ *
+ *  1. `max` metadata, not the default `min` bundle. The min bundle cannot
+ *     distinguish number TYPES and validates loosely, so it accepts strings
+ *     that are not real allocated ranges. Larger, and only ever loaded on the
+ *     server — the right trade when the alternative is quoting a transfer to a
+ *     number that cannot receive anything.
+ *
+ *  2. The `max` entry point resolves its metadata through an internal JSON
+ *     require, which does not survive every toolchain: under `tsx` it silently
+ *     yields `undefined` and the first parse throws
+ *     `Cannot read properties of undefined (reading 'hasOwnProperty')`. That
+ *     made `lib/phone.ts` unusable from any `scripts/` entry. Passing the
+ *     metadata explicitly removes the dependency on how a given runtime
+ *     resolves JSON.
+ */
+import { parsePhoneNumberFromString as parseWithMetadata, type CountryCode } from 'libphonenumber-js/core'
+import metadata from 'libphonenumber-js/metadata.max.json'
+
+function parsePhoneNumberFromString(input: string, country?: CountryCode) {
+  // The core signature requires the options argument, so pass an object rather
+  // than an undefined country.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return parseWithMetadata(input, { defaultCountry: country }, metadata as any)
+}
 
 // ─── Normalisation ───────────────────────────────────────────────────────────
 
