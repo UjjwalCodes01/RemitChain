@@ -12,17 +12,39 @@ import { useQuery } from '@tanstack/react-query'
 export interface TransferSummary {
   id: string
   txHash: string | null
+  claimTxHash: string | null
   recipientNickname: string | null
-  recipientPhoneHash: string | null
+  recipientPhoneMasked: string | null
   amount: string
+  netAmount: string | null
   corridor: string | null
   status: number           // 0=PENDING 1=CLAIMED 2=CANCELLED
-  offrampStatus: string    // NONE/PENDING/COMPLETED/FAILED
-  offrampMethod: string | null
-  smsStatus: string        // PENDING/SENT/FAILED
+  notifyStatus: string     // PENDING/SENT/FAILED
+  quotedRate: string | null
+  quotedCurrency: string | null
+  quotedLocalMinor: string | null
   createdAt: number | null
   claimedAt: number | null
   expiry: number | null
+  // Joined from the payout ledger; null until claimed.
+  payoutStatus: string | null
+  payoutRail: string | null
+  payoutDestinationMasked: string | null
+  payoutUtr: string | null
+}
+
+/** Human label for the fiat leg. */
+export function payoutLabel(status: string | null): string {
+  switch (status) {
+    case 'PAID': return 'Paid out'
+    case 'PROCESSING':
+    case 'SUBMITTED': return 'Paying out…'
+    case 'CREATED': return 'Queued'
+    case 'FAILED': return 'Retrying'
+    case 'REVERSED': return 'Returned'
+    case 'MANUAL_REVIEW': return 'Needs review'
+    default: return ''
+  }
 }
 
 const STATUS_LABELS: Record<number, string> = {

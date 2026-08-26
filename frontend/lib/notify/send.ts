@@ -6,14 +6,13 @@
  * Supported channels:
  *   'email' — Resend (free tier, 3000/month; production default on mainnet)
  *   'sms'   — Twilio (optional; retained for compatibility, inactive unless configured)
- *   'demo'  — On-screen only via /api/transfers/[id]/demo-otp (testnet only)
  *
  * Channel is selected by the OTP_CHANNEL environment variable (default: 'email').
  *
  * SECURITY: Never logs the OTP in production. Uses structured logs with masked values.
  */
 
-import { env } from '@/lib/env'
+import { serverEnv } from '@/lib/env.server'
 import { sendSms } from '@/lib/sms/send'
 import {
   buildOtpEmailHtml,
@@ -24,11 +23,16 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type NotifyChannel = 'email' | 'sms' | 'demo'
+/**
+ * Delivery channels. The old 'demo' channel — which reported success while
+ * surfacing the OTP on-screen instead of sending it — has been removed along
+ * with the endpoint that served it.
+ */
+export type NotifyChannel = 'email' | 'sms'
 
 export interface NotifyPayload {
   transferId: string
-  channel?: NotifyChannel          // override; defaults to env.OTP_CHANNEL
+  channel?: NotifyChannel          // override; defaults to serverEnv.OTP_CHANNEL
   to: string                       // email address or E.164 phone depending on channel
   otp: string                      // 6-digit plaintext OTP
   amount: string                   // formatted display amount e.g. "50.00 QUSD"
@@ -51,18 +55,13 @@ export interface NotifyResult {
  * Never throws — returns a NotifyResult with success=false on failure.
  */
 export async function notifyRecipient(payload: NotifyPayload): Promise<NotifyResult> {
-  const channel: NotifyChannel = payload.channel ?? (env.OTP_CHANNEL as NotifyChannel) ?? 'email'
+  const channel: NotifyChannel = payload.channel ?? serverEnv.OTP_CHANNEL
 
   switch (channel) {
     case 'email':
       return sendOtpEmail(payload)
     case 'sms':
       return sendOtpSms(payload)
-    case 'demo':
-      // Demo channel: OTP is surfaced on-screen by the demo-otp API route.
-      // Nothing to send here — just log and return success.
-      console.log(`[DEMO] OTP for transfer ${payload.transferId.slice(0, 10)}… is on-screen`)
-      return { channel: 'demo', success: true }
     default:
       return { channel: 'email', success: false, error: `Unknown channel: ${channel}` }
   }
@@ -72,7 +71,7 @@ export async function notifyRecipient(payload: NotifyPayload): Promise<NotifyRes
 
 async function sendOtpEmail(payload: NotifyPayload): Promise<NotifyResult> {
   const { to, otp, amount, claimUrl, senderName, locale = 'en', transferId } = payload
-  const { RESEND_API_KEY, RESEND_FROM } = env
+  const { RESEND_API_KEY, RESEND_FROM } = serverEnv
 
   const templateData: EmailTemplateData = {
     otp,
@@ -88,8 +87,8 @@ async function sendOtpEmail(payload: NotifyPayload): Promise<NotifyResult> {
   const text = buildOtpEmailPlaintext(templateData)
 
   // ── 1. Try Gmail SMTP via Nodemailer (sends to ANY address, no sandbox) ──
-  const gmailUser = process.env.GMAIL_USER
-  const gmailPass = process.env.GMAIL_APP_PASSWORD
+  const gmailUser = serverEnv.GMAIL_USER
+  const gmailPass = serverEnv.GMAIL_APP_PASSWORD
 
   if (gmailUser && gmailPass) {
     try {

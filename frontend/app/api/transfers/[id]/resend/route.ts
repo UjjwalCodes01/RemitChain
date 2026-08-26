@@ -1,166 +1,120 @@
 /**
- * app/api/transfers/[id]/resend/route.ts
- *
  * POST /api/transfers/[id]/resend
  *
- * Re-sends the OTP to the recipient when they request it from the claim page.
- * Retrieves the OTP from Redis (stored during the send flow with a 48h TTL)
- * and re-fires the notify route.
+ * Re-sends the claim link and code to the recipient already on file.
  *
- * Rate-limiting: 1 resend per transfer per 60 seconds (stored in Redis).
+ * The caller cannot influence what is sent or where it goes. The old version
+ * accepted `{recipientEmail}` in the body and delivered the OTP there, which
+ * meant anyone who knew a transfer id could have its claim code mailed to an
+ * address of their choosing — the transfer id is public on-chain, so that was
+ * the whole credential.
  *
- * Security:
- *   - OTP is only fetched from Redis, never accepted from the client
- *   - Resend is blocked if the transfer is already claimed or cancelled
- *   - Returns success=true even if the OTP is missing in Redis to avoid
- *     leaking information about whether a transfer exists
+ * The destination now comes from the transfer record written at prepare time,
+ * and the credentials come from encrypted storage. The body is empty.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod'
-import { createPublicClient, http } from 'viem'
+import { createPublicClient, http, type Hex } from 'viem'
+import { eq } from 'drizzle-orm'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
-import { getRedis } from '@/lib/db/redis'
 import { serverChain, RPC_URL } from '@/lib/chain-config'
-import { env } from '@/lib/env'
-import { notifyRecipient, type NotifyChannel } from '@/lib/notify/send'
+import { db, transfers } from '@/lib/db'
+import { ChainStatus } from '@/lib/relayer/claim'
+import { deliverClaimNotification } from '@/lib/notify/deliver'
+import { rateLimit } from '@/lib/ratelimit'
+import { clientIp, log, shortId } from '@/lib/http'
 
-const RESEND_COOLDOWN_SECONDS = 60
-const OTP_KEY = (id: string) => `demo:otp:${id}` // same key used by demo-otp route
-const COOLDOWN_KEY = (id: string) => `resend:cooldown:${id}`
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-const bodySchema = z.object({
-  recipientEmail: z.string().email().optional(),
-  recipientPhone: z
-    .string()
-    .regex(/^\+[1-9]\d{6,14}$/, 'Must be E.164 format')
-    .optional(),
-}).refine(d => d.recipientEmail || d.recipientPhone, {
-  message: 'Either recipientEmail or recipientPhone is required',
-})
-
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const transferId = id.startsWith('0x') ? id : `0x${id}`
 
   if (!/^0x[a-fA-F0-9]{64}$/.test(transferId)) {
-    return NextResponse.json({ error: 'Invalid transferId' }, { status: 400 })
+    return NextResponse.json({ error: 'Invalid transfer reference' }, { status: 400 })
   }
 
-  let body: unknown
-  try { body = await req.json() }
-  catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
-
-  const parsed = bodySchema.safeParse(body)
-  if (!parsed.success) {
+  // One resend per transfer per minute, five per hour. The lower bound stops
+  // someone using us to spam a recipient's inbox.
+  const perMinute = await rateLimit('resend:min', transferId, { limit: 1, windowSeconds: 60 })
+  if (!perMinute.success) {
     return NextResponse.json(
-      { error: 'Validation failed', details: parsed.error.flatten().fieldErrors },
-      { status: 400 },
+      { error: 'Please wait a minute before requesting another code.' },
+      { status: 429, headers: { 'Retry-After': String(perMinute.retryAfterSeconds) } },
     )
   }
 
-  const { recipientEmail, recipientPhone } = parsed.data
+  const perHour = await rateLimit('resend:hour', transferId, { limit: 5, windowSeconds: 3600 })
+  if (!perHour.success) {
+    return NextResponse.json(
+      { error: 'Too many resend requests for this transfer. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(perHour.retryAfterSeconds) } },
+    )
+  }
 
-  // 1. Check on-chain: only resend for PENDING transfers
+  const ipLimit = await rateLimit('resend:ip', clientIp(_req), { limit: 20, windowSeconds: 3600 })
+  if (!ipLimit.success) {
+    return NextResponse.json({ error: 'Too many requests.' }, { status: 429 })
+  }
+
+  // Only a pending transfer can be resent.
   try {
     const publicClient = createPublicClient({ chain: serverChain, transport: http(RPC_URL) })
-    const transfer = await publicClient.readContract({
+    const transfer = (await publicClient.readContract({
       address: REMITCHAIN_ADDRESS,
       abi: RemitChainAbi,
       functionName: 'getTransfer',
-      args: [transferId as `0x${string}`],
-    }) as { status: number }
+      args: [transferId as Hex],
+    })) as { status: number; expiry: bigint }
 
-    if (transfer.status !== 1) {
+    if (transfer.status !== ChainStatus.PENDING) {
       return NextResponse.json(
-        { error: 'Transfer is not claimable — already claimed or cancelled.' },
-        { status: 400 },
+        { error: 'This transfer has already been claimed or cancelled.' },
+        { status: 409 },
       )
     }
-  } catch {
-    // Non-fatal — proceed anyway if chain read fails
-    console.warn('[resend] Could not verify on-chain status — proceeding')
-  }
-
-  // 2. Rate-limit: one resend per transfer per 60 seconds
-  const redis = getRedis()
-  if (redis) {
-    const cooldown = await redis.get(COOLDOWN_KEY(transferId))
-    if (cooldown) {
-      return NextResponse.json(
-        { error: 'Please wait 60 seconds between resend requests.' },
-        { status: 429 },
-      )
+    if (BigInt(Math.floor(Date.now() / 1000)) >= transfer.expiry) {
+      return NextResponse.json({ error: 'This transfer has expired.' }, { status: 410 })
     }
-  }
-
-  // 3. Retrieve OTP from Redis (stored by send page during the TX flow)
-  let otp: string | null = null
-  if (redis) {
-    try {
-      otp = await redis.get<string>(OTP_KEY(transferId))
-    } catch (err) {
-      console.warn('[resend] Redis OTP fetch failed:', err)
-    }
-  }
-
-  if (!otp) {
-    // OTP not in Redis — return success anyway to avoid timing attacks.
-    // The recipient must ask the sender to cancel and re-send.
-    console.warn(`[resend] OTP missing from Redis for transfer ${transferId.slice(0, 10)}…`)
-    return NextResponse.json({
-      sent: false,
-      error: 'OTP not found — it may have expired. Ask the sender to re-initiate the transfer.',
-    }, { status: 404 })
-  }
-
-  // 4. Re-send via notify service
-  const baseUrl =
-    env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
-  const claimUrl = `${baseUrl}/claim/${transferId}`
-  const channel: NotifyChannel = (env.OTP_CHANNEL as NotifyChannel) ?? 'email'
-
-  const to = channel === 'email' ? recipientEmail : recipientPhone
-  if (!to && channel !== 'demo') {
+  } catch (err) {
+    log('warn', 'resend.chain_read_failed', { err: String(err).slice(0, 160) })
     return NextResponse.json(
-      { error: `Channel is '${channel}' but no matching contact provided.` },
-      { status: 400 },
+      { error: 'We could not reach the network. Please try again.' },
+      { status: 502 },
     )
   }
 
-  const result = await notifyRecipient({
-    transferId,
-    channel,
-    to: to ?? 'demo',
-    otp,
-    amount: 'your transfer',
-    claimUrl,
-    senderName: undefined,
-    locale: recipientPhone?.startsWith('+91') ? 'hi' : 'en',
+  if (!db) {
+    return NextResponse.json({ error: 'Service temporarily unavailable' }, { status: 503 })
+  }
+
+  const rows = await db
+    .select({ id: transfers.id })
+    .from(transfers)
+    .where(eq(transfers.id, transferId))
+    .limit(1)
+
+  if (rows.length === 0) {
+    return NextResponse.json(
+      { error: 'We no longer hold the claim details for this transfer. Ask the sender to cancel and send again.' },
+      { status: 404 },
+    )
+  }
+
+  const result = await deliverClaimNotification(transferId)
+
+  log(result.sent ? 'info' : 'warn', `resend.${result.sent ? 'sent' : 'failed'}`, {
+    transferId: shortId(transferId),
+    channel: result.channel,
   })
 
-  // 5. Set cooldown in Redis
-  if (redis && result.success) {
-    try {
-      await redis.set(COOLDOWN_KEY(transferId), '1', { ex: RESEND_COOLDOWN_SECONDS })
-    } catch { /* non-fatal */ }
+  if (!result.sent) {
+    return NextResponse.json(
+      { sent: false, error: result.error ?? 'We could not resend the code. Please try again.' },
+      { status: 500 },
+    )
   }
 
-  console.log(JSON.stringify({
-    level: result.success ? 'info' : 'warn',
-    step: `resend.${result.success ? 'sent' : 'failed'}`,
-    channel: result.channel,
-    transferId: transferId.slice(0, 10) + '…',
-    ts: new Date().toISOString(),
-  }))
-
-  if (result.success) {
-    return NextResponse.json({ sent: true, channel: result.channel })
-  } else {
-    return NextResponse.json({ sent: false, error: result.error }, { status: 500 })
-  }
+  return NextResponse.json({ sent: true, channel: result.channel })
 }

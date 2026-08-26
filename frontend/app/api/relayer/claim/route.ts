@@ -1,627 +1,464 @@
 /**
- * app/api/relayer/claim/route.ts
+ * POST /api/relayer/claim
  *
- * Hardened relayer endpoint — processes OTP claims on behalf of recipients.
+ * The recipient redeems their transfer.
  *
- * SECURITY SURFACE (high-value):
- *  - Redis: 3 attempts per IP per 60 min (fast, stateless guard)
- *  - DB (otp_attempts): 3 attempts per transferId → permanent lock (durable)
- *  - Idempotency: DB status=CLAIMED → return cached txHash, no re-broadcast
- *  - Gas guard: check relayer balance before broadcasting
- *  - Phone-hash + OTP commit-reveal verified before any signing
- *  - RELAYER_PRIVATE_KEY server-side only, never logged or returned
- *  - Structured JSON logs at every step
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ORDER OF OPERATIONS — the important part
+ * ─────────────────────────────────────────────────────────────────────────────
+ *   1. verify credentials (phone commitment + OTP commitment, both on-chain)
+ *   2. validate the payout destination
+ *   3. BROADCAST the on-chain claim and wait for it to be mined
+ *   4. record the settlement
+ *   5. THEN create the payout ledger row and hand it to the worker
+ *
+ * The previous implementation ran the Razorpay payout at step 2½ — before the
+ * broadcast. A revert, an RPC timeout or a serverless timeout between the two
+ * meant real rupees had left the treasury against an escrow that never
+ * released, with no ledger entry to reconcile from. Money now only ever moves
+ * outward after the chain has confirmed it moved inward.
+ *
+ * Steps 3 and 5 are not atomic — nothing spanning a blockchain and a payment
+ * provider can be. The failure mode is deliberately one-sided: a crash between
+ * them leaves a claimed transfer with no payout, which
+ * `findOrphanedClaims()` detects and the payout cron repairs. The reverse —
+ * a payout with no claim — is unrecoverable, so it is made impossible.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createPublicClient, http, toHex, formatEther } from 'viem'
-import { privateKeyToAccount } from 'viem/accounts'
+import { createPublicClient, http, formatEther, type Hex } from 'viem'
 import { eq } from 'drizzle-orm'
-import { env } from '@/lib/env'
-import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
+import { env, IS_PRODUCTION_CHAIN } from '@/lib/env'
+import { relayerAddress, relayerPrivateKey } from '@/lib/env.server'
+import { serverChain } from '@/lib/chain-config'
+import { REMITCHAIN_ADDRESS, RemitChainAbi, FEE_BPS } from '@/lib/contracts'
 import {
-  computePhoneHash,
-  computeOtpCommitHash,
   buildAndBroadcastClaim,
+  mapClaimRevert,
+  ChainStatus,
   type TransferData,
 } from '@/lib/relayer/claim'
-import { db, transfers, otpAttempts } from '@/lib/db'
-import { getIpRatelimit } from '@/lib/db/redis'
-import { qusdToLocalSubunit, CORRIDOR_CURRENCY } from '@/lib/fx/rates'
+import {
+  CLAIM_SECRET_PATTERN,
+  OTP_PATTERN,
+  deriveOtpReveal,
+  deriveOtpCommitHash,
+  legacyOtpReveal,
+  isLegacySchemeAllowed,
+} from '@/lib/claim-secret'
+import { parsePhone, phoneHashMatches } from '@/lib/phone'
+import { getCorridorByIndex, validateDestination } from '@/lib/corridors'
+import { db, transfers } from '@/lib/db'
+import { enqueuePayout, getPayoutForTransfer, submitPayout, toPublicPayout } from '@/lib/payouts/ledger'
+import { checkOtpLock, recordOtpFailure, clearOtpAttempts } from '@/lib/otp-guard'
+import { rateLimit } from '@/lib/ratelimit'
+import { clientIp, log, shortId } from '@/lib/http'
 
-// ── Active chain (selected by NEXT_PUBLIC_CHAIN_ID) ──────────────────────────
-// This must match the chain the contracts are deployed on.
-// Switching environments requires only env var changes — no code edits.
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-const CHAIN_ID = Number(env.NEXT_PUBLIC_CHAIN_ID)
-const IS_MAINNET = CHAIN_ID === 1990
-
-const activeChain = {
-  id: CHAIN_ID,
-  name: IS_MAINNET ? 'QIE' : 'QIE Testnet',
-  nativeCurrency: { name: 'QIE', symbol: 'QIE', decimals: 18 },
-  rpcUrls: { default: { http: [env.NEXT_PUBLIC_RPC_URL] } },
-} as const
-
-function getCorridorId(index: number): string {
-  const mapping = ['ae-in', 'us-mx', 'gb-ng', 'sa-pk', 'sg-bd']
-  return mapping[index - 1] || 'ae-in'
-}
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const MAX_ATTEMPTS = 3
-const MIN_RELAYER_BALANCE = BigInt('10000000000000000') // 0.01 QIE in wei
-
-// ── In-memory fallback (when DB unavailable — for local dev without Neon) ─────
-
-interface AttemptRecord { count: number; lockUntil: number }
-const attemptMap = new Map<string, AttemptRecord>()
-
-// ── Rate-limiting helpers ─────────────────────────────────────────────────────
-
-async function checkDbLock(transferId: string): Promise<{ locked: boolean; retryAfterMs?: number }> {
-  if (!db) {
-    // In-memory fallback
-    const now = Date.now()
-    const rec = attemptMap.get(transferId)
-    if (!rec) return { locked: false }
-    if (rec.lockUntil > now) return { locked: true, retryAfterMs: rec.lockUntil - now }
-    return { locked: false }
-  }
-
-  const rows = await db.select().from(otpAttempts).where(eq(otpAttempts.transferId, transferId)).limit(1)
-  const row = rows[0]
-  if (!row || row.lockedAt === null) return { locked: false }
-  return { locked: true }
-}
-
-async function recordDbFailure(transferId: string, ip: string): Promise<void> {
-  if (!db) {
-    const now = Date.now()
-    const rec = attemptMap.get(transferId) ?? { count: 0, lockUntil: 0 }
-    const newCount = rec.count + 1
-    attemptMap.set(transferId, {
-      count: newCount,
-      lockUntil: newCount >= MAX_ATTEMPTS ? now + 10 * 60 * 1000 : rec.lockUntil,
-    })
-    return
-  }
-
-  const rows = await db.select().from(otpAttempts).where(eq(otpAttempts.transferId, transferId)).limit(1)
-  const existing = rows[0]
-  const newCount = (existing?.attemptCount ?? 0) + 1
-  const now = Date.now()
-
-  await db
-    .insert(otpAttempts)
-    .values({
-      transferId,
-      attemptCount: newCount,
-      lockedAt: newCount >= MAX_ATTEMPTS ? now : null,
-      lastAttemptAt: now,
-      lastAttemptIp: ip,
-    })
-    .onConflictDoUpdate({
-      target: otpAttempts.transferId,
-      set: {
-        attemptCount: newCount,
-        lockedAt: newCount >= MAX_ATTEMPTS ? now : null,
-        lastAttemptAt: now,
-        lastAttemptIp: ip,
-      },
-    })
-}
-
-async function clearDbAttempts(transferId: string): Promise<void> {
-  attemptMap.delete(transferId)
-  if (!db) return
-  await db.delete(otpAttempts).where(eq(otpAttempts.transferId, transferId))
-}
-
-// ── DB idempotency: check if already claimed ──────────────────────────────────
-
-async function getDbTxHash(transferId: string): Promise<string | null> {
-  if (!db) return null
-  const rows = await db.select({ status: transfers.status, txHash: transfers.txHash })
-    .from(transfers)
-    .where(eq(transfers.id, transferId))
-    .limit(1)
-  const row = rows[0]
-  if (row?.status === 1 && row.txHash) return row.txHash
-  return null
-}
-
-// ── Structured logger ─────────────────────────────────────────────────────────
-
-function log(level: 'info' | 'warn' | 'error', step: string, meta: Record<string, unknown> = {}) {
-  console.log(JSON.stringify({ level, step, ts: new Date().toISOString(), ...meta }))
-}
-
-// ── Razorpay Payout API Helper ───────────────────────────────────────────────
-
-interface RazorpayPayoutResponse {
-  id: string
-  status: string
-  utr?: string
-  fees?: number
-}
-
-async function razorpayPayout(params: {
-  keyId: string
-  keySecret: string
-  upiId: string
-  amount: number       // in paise (INR)
-  recipientName: string
-  referenceId: string  // transferId slice for idempotency
-}): Promise<RazorpayPayoutResponse> {
-  const auth = Buffer.from(`${params.keyId}:${params.keySecret}`).toString('base64')
-  const headers = {
-    Authorization: `Basic ${auth}`,
-    'Content-Type': 'application/json',
-    'X-Payout-Idempotency': params.referenceId, // Razorpay idempotency key
-  }
-
-  // Step 1: Create fund account
-  const faRes = await fetch('https://api.razorpay.com/v1/fund_accounts', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      contact_id: `contact_${params.referenceId.slice(2, 12)}`,
-      account_type: 'vpa',
-      vpa: { address: params.upiId },
-    }),
-  })
-
-  if (!faRes.ok && faRes.status !== 400) {
-    throw new Error(`Razorpay fund account error ${faRes.status}: ${await faRes.text()}`)
-  }
-
-  const fa = await faRes.json() as { id?: string }
-  const fundAccountId = fa.id ?? `fa_${params.referenceId.slice(2, 12)}`
-
-  // Step 2: Create payout
-  const payoutRes = await fetch('https://api.razorpay.com/v1/payouts', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      account_number: process.env.RAZORPAY_ACCOUNT_NUMBER ?? 'test_account',
-      fund_account_id: fundAccountId,
-      amount: params.amount,
-      currency: 'INR',
-      mode: 'UPI',
-      purpose: 'payout',
-      queue_if_low_balance: false,
-      reference_id: params.referenceId,
-      narration: 'RemitChain Transfer',
-    }),
-  })
-
-  if (!payoutRes.ok) {
-    throw new Error(`Razorpay payout error ${payoutRes.status}: ${await payoutRes.text()}`)
-  }
-
-  return payoutRes.json() as Promise<RazorpayPayoutResponse>
-}
-
-async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
-  let last: unknown
-  for (let i = 0; i < attempts; i++) {
-    try { return await fn() }
-    catch (err) {
-      last = err
-      if (i < attempts - 1) await new Promise(r => setTimeout(r, 600 * 2 ** i))
-    }
-  }
-  throw last
-}
-
-// ── Input schema ──────────────────────────────────────────────────────────────
+/** Relayer must hold at least this much gas before we attempt a claim. */
+const MIN_RELAYER_BALANCE_WEI = 10_000_000_000_000_000n // 0.01 QIE
 
 const claimSchema = z.object({
-  transferId: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'transferId must be a 64-char hex bytes32 with 0x prefix'),
-  otp: z.string().regex(/^\d{6}$/, 'OTP must be exactly 6 digits'),
-  recipientPhone: z.string().regex(/^\+[1-9]\d{6,14}$/, 'recipientPhone must be E.164 format'),
-  payoutId: z.string().min(1, 'Payout destination is required'),
+  transferId: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid transfer reference'),
+  otp: z.string().regex(OTP_PATTERN, 'The code must be 6 digits'),
+  recipientPhone: z.string().min(4).max(32),
+  payoutDestination: z.string().min(1).max(120),
+  /** From the claim link fragment. Absent only for legacy in-flight transfers. */
+  claimSecret: z.string().regex(CLAIM_SECRET_PATTERN).optional(),
 })
 
-// ── Route handler ─────────────────────────────────────────────────────────────
-
 export async function POST(req: NextRequest) {
-  const start = Date.now()
-  let transferId = 'unknown'
-  let clientIp = 'unknown'
+  const started = Date.now()
+  const ip = clientIp(req)
 
+  // ── Parse ──────────────────────────────────────────────────────────────────
+  let body: unknown
   try {
-    // 1. Parse + validate body
-    let body: unknown
-    try { body = await req.json() }
-    catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
-
-    const parsed = claimSchema.safeParse(body)
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: parsed.error.flatten().fieldErrors },
-        { status: 400 },
-      )
-    }
-
-    const { otp, recipientPhone, payoutId } = parsed.data
-    transferId = parsed.data.transferId
-    clientIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
-
-    log('info', 'claim.start', { transferId: transferId.slice(0, 10) + '…' })
-
-  // 2a. Redis IP rate-limit (fast check, per IP per hour)
-  const ipLimiter = getIpRatelimit()
-  if (ipLimiter) {
-    const { success, remaining } = await ipLimiter.limit(clientIp)
-    if (!success) {
-      log('warn', 'claim.ip_rate_limited', { ip: clientIp })
-      return NextResponse.json(
-        { error: 'Too many requests from this IP. Try again later.' },
-        { status: 429 },
-      )
-    }
-    log('info', 'claim.ip_ok', { remaining })
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
   }
 
-  // 2b. DB transferId lock (durable across restarts)
-  const lockCheck = await checkDbLock(transferId)
-  if (lockCheck.locked) {
-    log('warn', 'claim.transfer_locked', { transferId: transferId.slice(0, 10) + '…' })
+  const parsed = claimSchema.safeParse(body)
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: 'Too many failed attempts for this transfer. Contact support.', retryAfterMs: lockCheck.retryAfterMs },
-      { status: 429 },
+      { error: 'Please check the details and try again.', details: parsed.error.flatten().fieldErrors },
+      { status: 400 },
     )
   }
 
-  // 3. Validate relayer env
-  if (!env.RELAYER_PRIVATE_KEY || !env.NEXT_PUBLIC_RELAYER_ADDRESS) {
-    log('error', 'claim.missing_env', {})
-    return NextResponse.json({ error: 'Relayer not configured' }, { status: 500 })
+  const { transferId, otp, recipientPhone, payoutDestination, claimSecret } = parsed.data
+
+  // ── Rate limits ────────────────────────────────────────────────────────────
+  const ipLimit = await rateLimit('claim:ip', ip, { limit: 10, windowSeconds: 3600 })
+  if (!ipLimit.success) {
+    log('warn', 'claim.ip_rate_limited', { ip })
+    return NextResponse.json(
+      { error: 'Too many attempts from this network. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(ipLimit.retryAfterSeconds) } },
+    )
   }
 
-  const relayerPrivateKey = env.RELAYER_PRIVATE_KEY as `0x${string}`
-  const relayerAddress = env.NEXT_PUBLIC_RELAYER_ADDRESS as `0x${string}`
-
-  const account = privateKeyToAccount(relayerPrivateKey)
-  if (account.address.toLowerCase() !== relayerAddress.toLowerCase()) {
-    log('error', 'claim.key_mismatch', {})
-    return NextResponse.json({ error: 'Relayer misconfiguration' }, { status: 500 })
+  const lock = await checkOtpLock(transferId)
+  if (lock.locked) {
+    log('warn', 'claim.transfer_locked', { transferId: shortId(transferId) })
+    return NextResponse.json(
+      {
+        error: `Too many incorrect codes. Please try again in ${Math.ceil(lock.retryAfterMs / 60_000)} minutes.`,
+        retryAfterMs: lock.retryAfterMs,
+      },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(lock.retryAfterMs / 1000)) } },
+    )
   }
 
-  const publicClient = createPublicClient({
-    chain: activeChain,
-    transport: http(env.NEXT_PUBLIC_RPC_URL),
+  const publicClient = createPublicClient({ chain: serverChain, transport: http(env.NEXT_PUBLIC_RPC_URL) })
+
+  // ── Read the authoritative transfer state ─────────────────────────────────
+  let transfer: TransferData
+  try {
+    transfer = (await publicClient.readContract({
+      address: REMITCHAIN_ADDRESS,
+      abi: RemitChainAbi,
+      functionName: 'getTransfer',
+      args: [transferId as Hex],
+    })) as TransferData
+  } catch (err) {
+    log('error', 'claim.chain_read_failed', { err: String(err).slice(0, 200) })
+    return NextResponse.json(
+      { error: 'We could not reach the network. Please try again.' },
+      { status: 502 },
+    )
+  }
+
+  if (transfer.status === ChainStatus.NONE) {
+    return NextResponse.json({ error: 'We could not find this transfer.' }, { status: 404 })
+  }
+
+  const corridor = getCorridorByIndex(transfer.corridor)
+  if (!corridor) {
+    log('error', 'claim.unknown_corridor', { corridor: transfer.corridor })
+    return NextResponse.json(
+      { error: 'This transfer uses a destination we no longer support. Please contact support.' },
+      { status: 409 },
+    )
+  }
+
+  // ── Already claimed: report the payout, never re-broadcast ────────────────
+  if (transfer.status === ChainStatus.CLAIMED) {
+    const payout = await getPayoutForTransfer(transferId)
+    log('info', 'claim.idempotent', { transferId: shortId(transferId) })
+    return NextResponse.json({
+      success: true,
+      idempotent: true,
+      payout: payout ? toPublicPayout(payout) : null,
+      // A claimed transfer with no payout row is the orphan case; the cron
+      // repairs it, so tell the recipient it is in progress rather than lost.
+      payoutStatus: payout?.status ?? 'CREATED',
+    })
+  }
+
+  if (transfer.status === ChainStatus.CANCELLED) {
+    return NextResponse.json(
+      { error: 'This transfer was cancelled and refunded to the sender.' },
+      { status: 409 },
+    )
+  }
+
+  // ── Expiry ────────────────────────────────────────────────────────────────
+  const nowSeconds = BigInt(Math.floor(Date.now() / 1000))
+  if (nowSeconds >= transfer.expiry) {
+    return NextResponse.json(
+      { error: 'This transfer has expired. The sender can reclaim the funds.' },
+      { status: 410 },
+    )
+  }
+
+  // ── Credential checks ─────────────────────────────────────────────────────
+  // Both are verified against values stored ON-CHAIN, never against anything
+  // this request supplied or anything cached in the database.
+
+  const phone = parsePhone(recipientPhone, corridor.recvCountry)
+  if (!phone.ok) {
+    await recordOtpFailure(transferId, ip)
+    return NextResponse.json({ error: 'Please enter a valid phone number.' }, { status: 400 })
+  }
+
+  if (!phoneHashMatches(phone.e164, transfer.recipientPhoneHash)) {
+    await recordOtpFailure(transferId, ip)
+    log('warn', 'claim.phone_mismatch', { transferId: shortId(transferId) })
+    // Deliberately the same message as a bad OTP: distinguishing them tells an
+    // attacker which half of the credentials they have already guessed.
+    return NextResponse.json(
+      { error: 'Those details do not match this transfer. Please check and try again.' },
+      { status: 400 },
+    )
+  }
+
+  const otpReveal = resolveOtpReveal({
+    transferId: transferId as Hex,
+    otp,
+    claimSecret,
+    recipient: relayerAddress(),
+    onChainCommit: transfer.otpCommitHash,
   })
 
-  // 4. Gas balance guard — prevent silent failures when relayer is dry
+  if (!otpReveal) {
+    const attempt = await recordOtpFailure(transferId, ip)
+    log('warn', 'claim.otp_mismatch', { transferId: shortId(transferId), attempts: attempt.attemptCount })
+    return NextResponse.json(
+      {
+        error: 'Those details do not match this transfer. Please check and try again.',
+        attemptsRemaining: attempt.attemptsRemaining,
+      },
+      { status: 400 },
+    )
+  }
+
+  // ── Payout destination ────────────────────────────────────────────────────
+  const destination = validateDestination(corridor, payoutDestination)
+  if (!destination.ok) {
+    // Not a credential failure — do not spend one of the recipient's attempts.
+    return NextResponse.json({ error: destination.error }, { status: 400 })
+  }
+
+  // ── Relayer gas ───────────────────────────────────────────────────────────
   try {
-    const balance = await publicClient.getBalance({ address: relayerAddress })
-    if (balance < MIN_RELAYER_BALANCE) {
-      log('error', 'claim.low_gas', { balance: formatEther(balance) })
+    const balance = await publicClient.getBalance({ address: relayerAddress() })
+    if (balance < MIN_RELAYER_BALANCE_WEI) {
+      log('error', 'claim.relayer_out_of_gas', { balance: formatEther(balance) })
       return NextResponse.json(
-        { error: 'Relayer wallet has insufficient gas. Please contact support.' },
+        { error: 'We are temporarily unable to process claims. Please try again shortly.' },
         { status: 503 },
       )
     }
   } catch (err) {
-    log('warn', 'claim.balance_check_failed', { err: String(err).slice(0, 100) })
-    // Non-fatal: proceed anyway — let the broadcast fail with a clear error
+    log('warn', 'claim.balance_check_failed', { err: String(err).slice(0, 120) })
+    // Non-fatal: the broadcast below will fail loudly if gas really is short.
   }
 
-  // 5. Fetch transfer from chain (authoritative source of truth)
-  let transfer: TransferData
+  // ── Settle on-chain ───────────────────────────────────────────────────────
+  let claimTxHash: Hex
   try {
-    transfer = await publicClient.readContract({
-      address: REMITCHAIN_ADDRESS,
-      abi: RemitChainAbi,
-      functionName: 'getTransfer',
-      args: [transferId as `0x${string}`],
-    }) as TransferData
+    log('info', 'claim.broadcasting', { transferId: shortId(transferId) })
+    const result = await buildAndBroadcastClaim({
+      transferId: transferId as Hex,
+      otpReveal,
+      relayerPrivateKey: relayerPrivateKey(),
+      relayerAddress: relayerAddress(),
+      rpcUrl: env.NEXT_PUBLIC_RPC_URL,
+      chain: serverChain as unknown as Parameters<typeof buildAndBroadcastClaim>[0]['chain'],
+    })
+    claimTxHash = result.txHash
   } catch (err) {
-    log('error', 'claim.fetch_failed', { err: String(err).slice(0, 100) })
-    return NextResponse.json({ error: 'Failed to fetch transfer from chain' }, { status: 502 })
-  }
+    const message = err instanceof Error ? err.message : String(err)
+    log('error', 'claim.broadcast_failed', { transferId: shortId(transferId), err: message.slice(0, 300) })
 
-  log('info', 'claim.transfer_fetched', { status: transfer.status })
-
-  // Sync transfer to DB if it exists on-chain but is missing from DB cache (prevents foreign key errors on otp_attempts)
-  if (db) {
-    try {
-      const existing = await db
-        .select({ id: transfers.id })
-        .from(transfers)
-        .where(eq(transfers.id, transferId))
-        .limit(1)
-
-      if (existing.length === 0) {
-        log('info', 'claim.sync_missing_transfer_to_db', { transferId })
-        const corridorId = getCorridorId(transfer.corridor)
-        
-        // Map on-chain status (1=PENDING, 2=CLAIMED, 3=CANCELLED) to DB status (0=PENDING, 1=CLAIMED, 2=CANCELLED)
-        let dbStatus = 0
-        if (transfer.status === 1) dbStatus = 0
-        else if (transfer.status === 2) dbStatus = 1
-        else if (transfer.status === 3) dbStatus = 2
-
-        await db.insert(transfers).values({
-          id: transferId,
-          txHash: null,
-          senderAddress: transfer.sender.toLowerCase(),
-          recipientPhoneHash: transfer.recipientPhoneHash,
-          recipientNickname: null,
-          amount: transfer.amount.toString(),
-          corridor: corridorId,
-          status: dbStatus,
-          offrampStatus: 'NONE',
-          smsStatus: 'PENDING',
-          recipientEmail: null,
-          emailStatus: 'PENDING',
-          createdAt: Math.floor(Date.now() / 1000),
-          updatedAt: Math.floor(Date.now() / 1000),
-          expiry: Number(transfer.expiry),
-        })
-      }
-    } catch (dbErr) {
-      log('error', 'claim.sync_missing_transfer_failed', { err: String(dbErr) })
-    }
-  }
-
-  // Validate payoutId format based on corridor
-  const payoutIdClean = payoutId.trim()
-  if (transfer.corridor === 1 && !/^[\w.-]+@[\w.-]+$/.test(payoutIdClean)) {
-    return NextResponse.json({ error: 'Invalid UPI ID format' }, { status: 400 })
-  }
-  if (transfer.corridor === 2 && !/^\d{18}$/.test(payoutIdClean)) {
-    return NextResponse.json({ error: 'Invalid SPEI CLABE (must be 18 digits)' }, { status: 400 })
-  }
-  if (transfer.corridor === 3 && !/^\d{10}$/.test(payoutIdClean)) {
-    return NextResponse.json({ error: 'Invalid OPay account (must be 10 digits)' }, { status: 400 })
-  }
-  if (transfer.corridor === 4 && !/^\d{11}$/.test(payoutIdClean)) {
-    return NextResponse.json({ error: 'Invalid JazzCash number (must be 11 digits)' }, { status: 400 })
-  }
-  if (transfer.corridor === 5 && !/^\d{11}$/.test(payoutIdClean)) {
-    return NextResponse.json({ error: 'Invalid bKash number (must be 11 digits)' }, { status: 400 })
-  }
-
-  // 6. Idempotency — already CLAIMED on-chain (status=2) → return cached txHash + offramp data
-  if (transfer.status === 2) {
-    const cachedTxHash = await getDbTxHash(transferId)
-    let offrampStatus = 'NONE'
-    let offrampMethod = null
-    let offrampReference = null
-
-    if (db) {
-      const rows = await db.select({
-        offrampStatus: transfers.offrampStatus,
-        offrampMethod: transfers.offrampMethod,
-        offrampReference: transfers.offrampReference,
-      }).from(transfers).where(eq(transfers.id, transferId)).limit(1)
-      if (rows[0]) {
-        offrampStatus = rows[0].offrampStatus
-        offrampMethod = rows[0].offrampMethod
-        offrampReference = rows[0].offrampReference
-      }
+    const mapped = mapClaimRevert(message)
+    if (mapped) {
+      if (mapped.status === 400) await recordOtpFailure(transferId, ip)
+      return NextResponse.json({ error: mapped.error }, { status: mapped.status })
     }
 
-    if (!cachedTxHash && db) {
-      try {
-        const corridorId = getCorridorId(transfer.corridor)
-        await db.insert(transfers).values({
-          id: transferId,
-          txHash: null,
-          senderAddress: transfer.sender.toLowerCase(),
-          recipientPhoneHash: transfer.recipientPhoneHash,
-          recipientNickname: null,
-          amount: transfer.amount.toString(),
-          corridor: corridorId,
-          status: 1, // CLAIMED
-          offrampStatus,
-          offrampMethod,
-          offrampReference,
-          smsStatus: 'SENT',
-          recipientEmail: null,
-          emailStatus: 'PENDING',
-          createdAt: Math.floor(Date.now() / 1000) - 3600,
-          updatedAt: Math.floor(Date.now() / 1000),
-          claimedAt: Math.floor(Date.now() / 1000),
-          expiry: Number(transfer.expiry),
-        })
-      } catch (e) {
-        log('warn', 'claim.idempotent_insert_failed', { err: String(e).slice(0, 100) })
-      }
-    }
-    log('info', 'claim.idempotent', { transferId: transferId.slice(0, 10) + '…' })
-    return NextResponse.json({ success: true, idempotent: true, txHash: cachedTxHash, offrampStatus, offrampMethod, offrampReference })
+    return NextResponse.json(
+      { error: 'We could not complete your claim. No money has moved — please try again.' },
+      { status: 502 },
+    )
   }
 
-  // 7. Guard: must be PENDING (status=1). NONE=0 means not found; CANCELLED=3 is terminal.
-  if (transfer.status !== 1) {
-    log('warn', 'claim.not_pending', { status: transfer.status })
-    return NextResponse.json({ error: 'Transfer is not in a claimable state' }, { status: 400 })
-  }
+  // From here the escrow HAS released. Nothing below may fail the request in a
+  // way that suggests otherwise.
+  await clearOtpAttempts(transferId)
 
-  // 8. Expiry check
-  const nowSec = BigInt(Math.floor(Date.now() / 1000))
-  if (nowSec > transfer.expiry) {
-    log('warn', 'claim.expired', {})
-    return NextResponse.json({ error: 'Transfer has expired' }, { status: 400 })
-  }
+  const netAmount = transfer.amount - (transfer.amount * BigInt(FEE_BPS)) / 10_000n
+  const settledAt = Date.now()
 
-  // 9. Phone hash verification
-  const derivedPhoneHash = computePhoneHash(recipientPhone)
-  if (derivedPhoneHash.toLowerCase() !== transfer.recipientPhoneHash.toLowerCase()) {
-    await recordDbFailure(transferId, clientIp)
-    log('warn', 'claim.phone_mismatch', {})
-    return NextResponse.json({ error: 'Phone number does not match transfer' }, { status: 400 })
-  }
+  const stored = await recordSettlement({
+    transferId,
+    claimTxHash,
+    transfer,
+    netAmount,
+    corridorId: corridor.id,
+    settledAt,
+  })
 
-  // 10. OTP commit-reveal check
-  const otpReveal = toHex(BigInt(otp), { size: 32 })
-  const derivedCommitHash = computeOtpCommitHash(
-    otpReveal as `0x${string}`,
-    transferId as `0x${string}`,
-    relayerAddress,
+  // ── Hand off to the payout ledger ─────────────────────────────────────────
+  const enqueued = await enqueuePayout(
+    {
+      transferId,
+      corridorId: corridor.id,
+      destination: destination.value,
+      netAmountBaseUnits: netAmount,
+      quotedRate: stored?.quotedRate ?? null,
+      quotedLocalMinor: stored?.quotedLocalMinor ?? null,
+    },
+    IS_PRODUCTION_CHAIN,
   )
 
-  if (derivedCommitHash.toLowerCase() !== transfer.otpCommitHash.toLowerCase()) {
-    await recordDbFailure(transferId, clientIp)
-    log('warn', 'claim.otp_mismatch', {})
-    return NextResponse.json({ error: 'Invalid OTP' }, { status: 400 })
-  }
-
-  // 11. Broadcast claim
-  log('info', 'claim.broadcasting', { transferId: transferId.slice(0, 10) + '…' })
-
-  // 12a. Execute offramp logic
-  let offrampStatus = 'COMPLETED'
-  let offrampMethod = 'UPI'
-  let offrampReference = ''
-
-  if (transfer.corridor === 1) {
-    offrampMethod = 'UPI'
-    const keyId = process.env.RAZORPAY_KEY_ID
-    const keySecret = process.env.RAZORPAY_KEY_SECRET
-    // Use live FX rate (5-min cached); falls back to seeded 83.45 if fetch fails
-    const amountPaise = await qusdToLocalSubunit(transfer.amount, 'INR', 100)
-
-    if (!keyId || !keySecret || keyId.startsWith('rzp_test_')) {
-      offrampReference = `rp_stub_${Date.now()}_${transferId.slice(2, 8)}_${payoutIdClean.slice(0, 8)}`
-      offrampStatus = 'COMPLETED'
-      log('info', 'claim.offramp_upi_stub', { amountPaise, upiId: payoutIdClean })
-    } else {
-      try {
-        const payout = await withRetry(() =>
-          razorpayPayout({
-            keyId,
-            keySecret,
-            upiId: payoutIdClean,
-            amount: amountPaise,
-            recipientName: 'Recipient',
-            referenceId: transferId.slice(2, 18),
-          })
-        )
-        offrampReference = payout.id
-        offrampStatus = payout.status === 'failed' ? 'FAILED' : 'COMPLETED'
-        log('info', 'claim.offramp_upi_razorpay_success', { payoutId: payout.id, upiId: payoutIdClean })
-      } catch (payoutErr) {
-        log('error', 'claim.offramp_upi_razorpay_failed', { err: String(payoutErr) })
-        offrampStatus = 'FAILED'
-        offrampReference = `rp_failed_${Date.now()}`
-      }
-    }
-  } else {
-    // Stubs for non-UPI corridors — include payoutId for traceability
-    const methodMap: Record<number, string> = {
-      2: 'SPEI',
-      3: 'OPay',
-      4: 'JazzCash',
-      5: 'bKash',
-    }
-    const currencyCode = CORRIDOR_CURRENCY[transfer.corridor] ?? 'USD'
-    offrampMethod = methodMap[transfer.corridor] ?? 'Payout'
-    offrampReference = `${offrampMethod.toLowerCase()}_stub_${Date.now()}_to_${payoutIdClean.slice(0, 12)}`
-    log('info', 'claim.offramp_stub', {
-      corridor: transfer.corridor,
-      method: offrampMethod,
-      currency: currencyCode,
-      destination: payoutIdClean,
+  if (!enqueued.ok) {
+    // The escrow released but we could not queue the payout. This is the
+    // orphan case the cron repairs; never report failure to the recipient,
+    // because their money is genuinely on its way.
+    log('error', 'claim.enqueue_failed', {
+      transferId: shortId(transferId),
+      code: enqueued.code,
+      error: enqueued.error,
+    })
+    return NextResponse.json({
+      success: true,
+      txHash: claimTxHash,
+      payoutStatus: 'CREATED',
+      payout: null,
+      message: 'Your transfer is confirmed and the payout is being arranged.',
     })
   }
+
+  // Try to submit immediately so the recipient sees real progress rather than
+  // waiting for the next cron tick. The cron remains the guarantee — this is
+  // only a latency optimisation, and a failure here is picked up on retry.
+  if (enqueued.created) {
+    try {
+      await submitPayout(enqueued.payout.id)
+    } catch (err) {
+      log('warn', 'claim.inline_submit_failed', {
+        payoutId: enqueued.payout.id,
+        err: String(err).slice(0, 200),
+      })
+    }
+  }
+
+  const finalPayout = await getPayoutForTransfer(transferId)
+
+  log('info', 'claim.success', {
+    transferId: shortId(transferId),
+    payoutStatus: finalPayout?.status,
+    durationMs: Date.now() - started,
+  })
+
+  return NextResponse.json({
+    success: true,
+    txHash: claimTxHash,
+    payout: finalPayout ? toPublicPayout(finalPayout) : null,
+    payoutStatus: finalPayout?.status ?? 'CREATED',
+  })
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+interface ResolveOtpInput {
+  transferId: Hex
+  otp: string
+  claimSecret?: string
+  recipient: Hex
+  onChainCommit: string
+}
+
+/**
+ * Work out which `otpReveal` reproduces the on-chain commitment.
+ *
+ * Tries the current high-entropy derivation first. Falls back to the legacy
+ * "OTP zero-padded to 32 bytes" scheme only while ALLOW_LEGACY_OTP_SCHEME is
+ * set, so transfers created before the upgrade can still be claimed during the
+ * 48-hour cutover window.
+ *
+ * Returns null when neither matches.
+ */
+function resolveOtpReveal(input: ResolveOtpInput): Hex | null {
+  const target = input.onChainCommit.toLowerCase()
+
+  if (input.claimSecret) {
+    try {
+      const reveal = deriveOtpReveal(input.claimSecret, input.otp)
+      if (deriveOtpCommitHash(reveal, input.transferId, input.recipient).toLowerCase() === target) {
+        return reveal
+      }
+    } catch {
+      // Malformed secret — fall through to the legacy attempt.
+    }
+  }
+
+  if (isLegacySchemeAllowed()) {
+    const reveal = legacyOtpReveal(input.otp)
+    if (deriveOtpCommitHash(reveal, input.transferId, input.recipient).toLowerCase() === target) {
+      return reveal
+    }
+  }
+
+  return null
+}
+
+interface SettlementInput {
+  transferId: string
+  claimTxHash: Hex
+  transfer: TransferData
+  netAmount: bigint
+  corridorId: string
+  settledAt: number
+}
+
+/**
+ * Mark the transfer settled and destroy the claim credentials.
+ *
+ * Returns the locked quote if the transfer carried one, so the payout is priced
+ * at the rate the sender was shown.
+ */
+async function recordSettlement(
+  input: SettlementInput,
+): Promise<{ quotedRate: string | null; quotedLocalMinor: string | null } | null> {
+  if (!db) return null
 
   try {
-    const { txHash } = await buildAndBroadcastClaim({
-      transferId: transferId as `0x${string}`,
-      otpReveal: otpReveal as `0x${string}`,
-      relayerPrivateKey,
-      relayerAddress,
-      rpcUrl: env.NEXT_PUBLIC_RPC_URL,
-      chain: activeChain as Parameters<typeof buildAndBroadcastClaim>[0]['chain'],
-    })
+    const rows = await db.select().from(transfers).where(eq(transfers.id, input.transferId)).limit(1)
+    const existing = rows[0]
 
-    // 12b. Persist to DB + clear attempts
-    await clearDbAttempts(transferId)
-    if (db) {
-      const updated = await db
-        .update(transfers)
-        .set({
-          status: 1, // CLAIMED in DB
-          claimedAt: Math.floor(Date.now() / 1000),
-          updatedAt: Math.floor(Date.now() / 1000),
-          txHash,
-          offrampStatus,
-          offrampMethod,
-          offrampReference,
-        })
-        .where(eq(transfers.id, transferId))
-        .returning()
+    const patch = {
+      status: 1, // CLAIMED
+      claimTxHash: input.claimTxHash,
+      claimedAt: input.settledAt,
+      updatedAt: input.settledAt,
+      // The credentials have served their purpose. Wiping them means a later
+      // database compromise cannot be used to claim anything.
+      claimSecretEnc: null,
+      otpEnc: null,
+    }
 
-      if (updated.length === 0) {
-        try {
-          const corridorId = getCorridorId(transfer.corridor)
-          await db.insert(transfers).values({
-            id: transferId,
-            txHash,
-            senderAddress: transfer.sender.toLowerCase(),
-            recipientPhoneHash: transfer.recipientPhoneHash,
-            recipientNickname: null,
-            amount: transfer.amount.toString(),
-            corridor: corridorId,
-            status: 1, // CLAIMED
-            offrampStatus,
-            offrampMethod,
-            offrampReference,
-            smsStatus: 'SENT',
-            recipientEmail: null,
-            emailStatus: 'PENDING',
-            createdAt: Math.floor(Date.now() / 1000) - 60,
-            updatedAt: Math.floor(Date.now() / 1000),
-            claimedAt: Math.floor(Date.now() / 1000),
-            expiry: Number(transfer.expiry),
-          })
-        } catch (insertErr) {
-          log('error', 'claim.fallback_insert_failed', { err: String(insertErr).slice(0, 100) })
-        }
+    if (existing) {
+      await db.update(transfers).set(patch).where(eq(transfers.id, input.transferId))
+      return {
+        quotedRate: existing.quotedRate,
+        quotedLocalMinor: existing.quotedLocalMinor,
       }
     }
 
-    log('info', 'claim.success', {
-      transferId: transferId.slice(0, 10) + '…',
-      durationMs: Date.now() - start,
+    // No local row: a transfer sent before this deployment, or one whose
+    // prepare row was lost. Reconstruct from chain so the payout has something
+    // to reference.
+    await db.insert(transfers).values({
+      id: input.transferId,
+      claimTxHash: input.claimTxHash,
+      senderAddress: input.transfer.sender.toLowerCase(),
+      recipientPhoneHash: input.transfer.recipientPhoneHash,
+      amount: input.transfer.amount.toString(),
+      netAmount: input.netAmount.toString(),
+      feeAmount: (input.transfer.amount - input.netAmount).toString(),
+      corridor: input.corridorId,
+      status: 1,
+      notifyStatus: 'SENT',
+      createdAt: input.settledAt,
+      updatedAt: input.settledAt,
+      claimedAt: input.settledAt,
+      expiry: Number(input.transfer.expiry) * 1000,
     })
-
-    return NextResponse.json({ success: true, txHash, offrampStatus, offrampMethod, offrampReference })
-
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    log('error', 'claim.broadcast_failed', { err: msg.slice(0, 200) })
-
-    if (msg.includes('InvalidOTPReveal')) {
-      await recordDbFailure(transferId, clientIp)
-      return NextResponse.json({ error: 'Invalid OTP' }, { status: 400 })
-    }
-    if (msg.includes('TransferExpired')) {
-      return NextResponse.json({ error: 'Transfer has expired' }, { status: 400 })
-    }
-    if (msg.includes('TransferNotPending')) {
-      return NextResponse.json({ error: 'Transfer is no longer pending' }, { status: 400 })
-    }
-
-    return NextResponse.json(
-      { error: 'Failed to process claim. Please try again.' },
-      { status: 500 },
-    )
-  }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    log('error', 'claim.fatal_unhandled', { err: msg })
-    return NextResponse.json(
-      { error: `Internal server error: ${msg.slice(0, 150)}` },
-      { status: 500 },
-    )
+    return null
+  } catch (err) {
+    // The chain is the source of truth; a bookkeeping failure must not be
+    // reported to a recipient whose money has already been released.
+    log('error', 'claim.settlement_record_failed', {
+      transferId: shortId(input.transferId),
+      err: String(err).slice(0, 300),
+    })
+    return null
   }
 }

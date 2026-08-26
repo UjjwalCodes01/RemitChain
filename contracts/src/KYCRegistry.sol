@@ -31,6 +31,16 @@ contract KYCRegistry is IKYCRegistry, Ownable2Step, Pausable, EIP712 {
     // Constants
     // =========================================================================
 
+    /// @notice Highest KYC tier this registry recognises.
+    uint8 public constant MAX_TIER = 2;
+
+    /// @notice KYC Tier 0 (unverified) daily send limit.
+    /// @dev    ZERO by default — an unverified wallet cannot send at all. This is the
+    ///         compliance-safe default: identity must be established before value moves.
+    ///         Governance may raise it via `setDailyLimit(0, x)` to open a small
+    ///         unverified allowance during a phased rollout.
+    uint256 public constant DEFAULT_T0_LIMIT = 0;
+
     /// @notice KYC Tier 1 daily send limit (500 QUSD, 6 decimals).
     uint256 public constant DEFAULT_T1_LIMIT = 500e6;
 
@@ -79,6 +89,7 @@ contract KYCRegistry is IKYCRegistry, Ownable2Step, Pausable, EIP712 {
         passOracle = _passOracle;
         remitChain = _remitChain;
 
+        dailyLimits[0] = DEFAULT_T0_LIMIT;
         dailyLimits[1] = DEFAULT_T1_LIMIT;
         dailyLimits[2] = DEFAULT_T2_LIMIT;
     }
@@ -133,13 +144,19 @@ contract KYCRegistry is IKYCRegistry, Ownable2Step, Pausable, EIP712 {
     /// @notice Checks that `amount` is within `user`'s remaining daily limit and records the usage.
     /// @dev    Only callable by the RemitChain contract. CEI pattern applied.
     ///         Not pausable — this path is in the send flow which is separately gated by RemitChain.
+    ///
+    /// @custom:security An unverified wallet (tier 0) has a limit of zero by default and is
+    ///                  rejected with `KYCRequired`. There is NO implicit tier upgrade: the
+    ///                  user's actual on-chain tier is the one that is enforced. Raising the
+    ///                  unverified allowance is an explicit governance action.
     /// @param user   The sender's wallet address.
     /// @param amount The transfer amount in QUSD base units.
     function checkAndConsume(address user, uint256 amount) external onlyRemitChain {
         uint8 level = _kycLevel[user];
-        if (level == 0) level = 1; // Default unverified users to Tier 1 limits
 
         uint256 limit = dailyLimits[level];
+        if (limit == 0) revert KYCRequired(user, level);
+
         uint256 dayId = block.timestamp / 1 days;
         uint256 currentUsage = _dailyUsage[user][dayId];
         uint256 newUsage = currentUsage + amount;
@@ -167,10 +184,12 @@ contract KYCRegistry is IKYCRegistry, Ownable2Step, Pausable, EIP712 {
 
     /// @notice Updates the daily limit for a given KYC tier.
     /// @dev    MUST be called via a 2-day TimelockController.
-    /// @param tier  The tier to update (1 or 2).
+    ///         Tier 0 (unverified) is settable so governance can deliberately open or close
+    ///         an unverified allowance; it is 0 at deploy time.
+    /// @param tier  The tier to update (0, 1 or 2).
     /// @param limit New daily limit in QUSD base units (6 decimals).
     function setDailyLimit(uint8 tier, uint256 limit) external onlyOwner {
-        if (tier < 1 || tier > 2) revert InvalidLevel(tier);
+        if (tier > MAX_TIER) revert InvalidLevel(tier);
         dailyLimits[tier] = limit;
         emit DailyLimitUpdated(tier, limit);
     }
@@ -190,19 +209,28 @@ contract KYCRegistry is IKYCRegistry, Ownable2Step, Pausable, EIP712 {
     // =========================================================================
 
     /// @notice Returns the current KYC tier for `user`.
+    /// @dev    Reports the true stored tier. `0` means unverified — it is NOT silently
+    ///         promoted to tier 1, because callers use this value for compliance decisions.
     /// @param user The wallet address to query.
     /// @return     KYC tier (0 = none, 1 = phone OTP, 2 = full ID).
     function getKYCLevel(address user) external view returns (uint8) {
-        uint8 level = _kycLevel[user];
-        return level == 0 ? 1 : level;
+        return _kycLevel[user];
     }
 
     /// @notice Returns the maximum daily send amount for `user` based on their tier.
     /// @param user The wallet address to query.
-    /// @return     Daily limit in QUSD base units (0 if unverified).
+    /// @return     Daily limit in QUSD base units (0 if unverified and tier 0 is closed).
     function getDailyLimit(address user) external view returns (uint256) {
-        uint8 level = _kycLevel[user];
-        return dailyLimits[level == 0 ? 1 : level];
+        return dailyLimits[_kycLevel[user]];
+    }
+
+    /// @notice Returns how much `user` may still send today.
+    /// @param user The wallet address to query.
+    /// @return     Remaining allowance in QUSD base units (0 when the limit is used up).
+    function getRemainingDailyLimit(address user) external view returns (uint256) {
+        uint256 limit = dailyLimits[_kycLevel[user]];
+        uint256 used = _dailyUsage[user][block.timestamp / 1 days];
+        return used >= limit ? 0 : limit - used;
     }
 
     /// @notice Returns the current day's already-consumed send amount for `user`.

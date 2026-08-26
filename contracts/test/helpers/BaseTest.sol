@@ -80,6 +80,14 @@ abstract contract BaseTest is Test {
         qusd.mint(sender, INITIAL_BALANCE);
         qusd.mint(attacker, INITIAL_BALANCE);
         qusd.mint(address(malicious), 1e6);
+
+        // Tier 0 now carries a zero daily limit, so an unverified wallet cannot
+        // send at all. Give the standard actors Tier 1 so the tests that are
+        // about escrow, claims and refunds are not all testing KYC instead.
+        // Tests that specifically exercise the unverified path start from a
+        // fresh address.
+        _setupKYC(sender, 1);
+        _setupKYC(attacker, 1);
     }
 
     function _deploySystem() internal {

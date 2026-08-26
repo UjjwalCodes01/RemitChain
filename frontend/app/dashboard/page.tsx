@@ -8,7 +8,7 @@ import { ArrowRight, Send, Clock, CheckCircle2, AlertCircle, BarChart2, Users, C
 import Link from 'next/link'
 import { useQUSDBalance } from '@/hooks/useQUSDBalance'
 import { useKYCStatus } from '@/hooks/useKYCStatus'
-import { useTransferHistory, statusLabel, formatQusd } from '@/hooks/useTransferHistory'
+import { useTransferHistory, statusLabel, payoutLabel, formatQusd } from '@/hooks/useTransferHistory'
 import { KYCBadge } from '@/components/ui/KYCBadge'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { NavBar } from '@/components/NavBar'
@@ -271,10 +271,12 @@ export default function DashboardPage() {
                       </div>
                       <div>
                         <p className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                          {tx.recipientNickname ?? tx.recipientPhoneHash?.slice(0, 10) ?? 'Recipient'}
+                          {tx.recipientNickname ?? tx.recipientPhoneMasked ?? 'Recipient'}
                         </p>
                         <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                          {statusLabel(tx.status)} · {tx.corridor ?? 'Transfer'}
+                          {statusLabel(tx.status)}
+                          {tx.payoutStatus ? ` · ${payoutLabel(tx.payoutStatus)}` : ''}
+                          {tx.corridor ? ` · ${tx.corridor}` : ''}
                         </p>
                       </div>
                     </div>

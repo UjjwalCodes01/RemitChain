@@ -1,86 +1,173 @@
 /**
  * lib/fx/rates.ts
  *
- * Lightweight FX rate fetcher with a 5-minute in-memory cache.
+ * FX rates for payout conversion.
  *
- * Primary source: open.er-api.com (free, no API key required).
- * Fallback: hardcoded seeded rates (same values shown in the send page UI).
+ * Two changes from the previous version that matter for real money:
  *
- * Usage:
- *   const usdToInr = await getFxRate('INR')  // → 83.45 ish
+ *  1. The cache is Redis-backed, not a module-level variable. On Vercel every
+ *     serverless instance had its own `_cache`, so two users sending at the same
+ *     moment could be quoted materially different rates, and a cold start always
+ *     paid the latency of a fresh fetch.
+ *
+ *  2. `getFxRate` reports WHERE the rate came from. Silently substituting a
+ *     hard-coded rate from May 2026 for a live one is fine for a UI preview and
+ *     not fine for deciding how many rupees to send. `quoteRequiresLiveRate()`
+ *     lets the send path refuse to quote on stale data.
  */
 
-// ── Seeded fallback rates (USD base) ─────────────────────────────────────────
-// Keep in sync with CORRIDORS in app/send/page.tsx
+import { cacheGet, cacheSet } from '@/lib/db/redis'
+
+// ─── Seeded fallback rates (USD base) ────────────────────────────────────────
+// Last-resort values only. They are a floor under the UI, never a basis for a
+// live payout unless ALLOW_SEEDED_FX_QUOTES is explicitly set.
 export const SEEDED_RATES: Record<string, number> = {
-  INR: 83.45,  // ae-in (UAE → India)
-  MXN: 17.12,  // us-mx (USA → Mexico)
-  NGN: 2018.0, // gb-ng (UK → Nigeria)
-  PKR: 75.2,   // sa-pk (Saudi → Pakistan)
-  BDT: 82.4,   // sg-bd (Singapore → Bangladesh)
+  INR: 83.45,
+  MXN: 17.12,
+  NGN: 2018.0,
+  PKR: 75.2,
+  BDT: 82.4,
 }
 
-// ── Corridor → currency mapping ───────────────────────────────────────────────
-export const CORRIDOR_CURRENCY: Record<number, string> = {
-  1: 'INR',
-  2: 'MXN',
-  3: 'NGN',
-  4: 'PKR',
-  5: 'BDT',
+export interface FxQuote {
+  currency: string
+  rate: number
+  source: 'live' | 'seeded'
+  fetchedAt: number
 }
 
-// ── In-memory cache ───────────────────────────────────────────────────────────
-interface CacheEntry { rates: Record<string, number>; fetchedAt: number }
-let _cache: CacheEntry | null = null
-const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+const CACHE_KEY = 'fx:usd:v2'
+const CACHE_TTL_SECONDS = 300 // 5 minutes
+const FETCH_TIMEOUT_MS = 6_000
 
-// ── Fetcher ───────────────────────────────────────────────────────────────────
+interface CachedRates {
+  rates: Record<string, number>
+  fetchedAt: number
+}
+
+/** Process-local memo, so repeated calls inside one request do not hit Redis. */
+let _local: CachedRates | null = null
+
 async function fetchRates(): Promise<Record<string, number>> {
-  const res = await fetch('https://open.er-api.com/v6/latest/USD', {
-    next: { revalidate: 300 }, // Next.js fetch cache: 5 min
-  })
-  if (!res.ok) throw new Error(`FX API responded ${res.status}`)
-  const data = (await res.json()) as { result: string; rates: Record<string, number> }
-  if (data.result !== 'success') throw new Error('FX API returned non-success result')
-  return data.rates
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const res = await fetch('https://open.er-api.com/v6/latest/USD', {
+      signal: controller.signal,
+      cache: 'no-store',
+    })
+    if (!res.ok) throw new Error(`FX API responded ${res.status}`)
+    const data = (await res.json()) as { result: string; rates: Record<string, number> }
+    if (data.result !== 'success' || !data.rates) throw new Error('FX API returned a non-success result')
+    return data.rates
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
-/**
- * Returns the live USD → targetCurrency exchange rate.
- * Falls back to the seeded rate if the fetch fails or times out.
- */
-export async function getFxRate(currency: string): Promise<number> {
+async function loadRates(): Promise<CachedRates | null> {
   const now = Date.now()
 
-  // Return cached rates if fresh
-  if (_cache && now - _cache.fetchedAt < CACHE_TTL_MS) {
-    return _cache.rates[currency] ?? SEEDED_RATES[currency] ?? 1
+  if (_local && now - _local.fetchedAt < CACHE_TTL_SECONDS * 1000) return _local
+
+  const cached = await cacheGet<CachedRates>(CACHE_KEY)
+  if (cached && now - cached.fetchedAt < CACHE_TTL_SECONDS * 1000) {
+    _local = cached
+    return cached
   }
 
   try {
     const rates = await fetchRates()
-    _cache = { rates, fetchedAt: now }
-    return rates[currency] ?? SEEDED_RATES[currency] ?? 1
+    const fresh: CachedRates = { rates, fetchedAt: now }
+    _local = fresh
+    await cacheSet(CACHE_KEY, fresh, CACHE_TTL_SECONDS)
+    return fresh
   } catch (err) {
-    console.warn('[FX] Rate fetch failed, using seeded fallback:', err)
-    return SEEDED_RATES[currency] ?? 1
+    console.warn('[fx] Live rate fetch failed:', String(err).slice(0, 200))
+    // A stale cached value still beats a rate from source control.
+    if (cached) {
+      _local = cached
+      return cached
+    }
+    return null
   }
 }
 
 /**
- * Convert a QUSD amount (6 decimals, stored as bigint string) to the
- * local currency amount in the smallest unit (paise, centavos, kobo, etc.).
- *
- * @param rawAmount   bigint string from on-chain (6 decimal QUSD)
- * @param currency    ISO 4217 currency code e.g. 'INR'
- * @param subunitMult multiplier to smallest unit (100 for INR paise, 100 for MXN centavos, etc.)
+ * Current USD → `currency` rate.
+ * Returns null only when there is no live rate AND no seeded fallback.
  */
-export async function qusdToLocalSubunit(
-  rawAmount: bigint | string,
+export async function getFxRate(currency: string): Promise<FxQuote | null> {
+  const loaded = await loadRates()
+  const live = loaded?.rates[currency]
+
+  if (typeof live === 'number' && Number.isFinite(live) && live > 0) {
+    return { currency, rate: live, source: 'live', fetchedAt: loaded!.fetchedAt }
+  }
+
+  const seeded = SEEDED_RATES[currency]
+  if (typeof seeded === 'number') {
+    return { currency, rate: seeded, source: 'seeded', fetchedAt: 0 }
+  }
+
+  return null
+}
+
+/**
+ * Whether a seeded rate is acceptable for a binding quote.
+ *
+ * Default is no: quoting a hard-coded rate to a real sender means the recipient
+ * is paid an amount that has no relationship to the market. Operators who
+ * knowingly accept that risk can set ALLOW_SEEDED_FX_QUOTES=true.
+ */
+export function seededQuotesAllowed(): boolean {
+  return process.env.ALLOW_SEEDED_FX_QUOTES === 'true'
+}
+
+// ─── Conversion ──────────────────────────────────────────────────────────────
+
+/**
+ * Convert QUSD base units (6 decimals) into the recipient currency's minor
+ * units, rounding half-up to the nearest minor unit.
+ */
+export function convertToMinor(
+  qusdBaseUnits: bigint | string,
+  rate: number,
+  minorUnits: number,
+): number {
+  const usd = Number(BigInt(qusdBaseUnits)) / 1_000_000
+  return Math.round(usd * rate * minorUnits)
+}
+
+export interface PayoutQuote {
+  currency: string
+  rate: number
+  source: 'live' | 'seeded'
+  /** Payout amount in minor units. */
+  amountMinor: number
+  /** Same amount as a display string, e.g. "8,331.55". */
+  amountDisplay: string
+}
+
+export async function quotePayout(
+  qusdBaseUnits: bigint,
   currency: string,
-  subunitMult = 100,
-): Promise<number> {
-  const usdValue = Number(BigInt(rawAmount)) / 1_000_000 // QUSD has 6 decimals
-  const rate = await getFxRate(currency)
-  return Math.round(usdValue * rate * subunitMult)
+  minorUnits: number,
+): Promise<PayoutQuote | null> {
+  const fx = await getFxRate(currency)
+  if (!fx) return null
+
+  const amountMinor = convertToMinor(qusdBaseUnits, fx.rate, minorUnits)
+  if (!Number.isFinite(amountMinor) || amountMinor <= 0) return null
+
+  return {
+    currency,
+    rate: fx.rate,
+    source: fx.source,
+    amountMinor,
+    amountDisplay: (amountMinor / minorUnits).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }),
+  }
 }

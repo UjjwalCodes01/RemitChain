@@ -45,11 +45,13 @@ contract KYCRegistryTest is BaseTest {
     }
 
     function test_VerifyUser_IncrementsNonce() public {
-        assertEq(kyc.nonces(sender), 0);
-        _setupKYC(sender, 1);
-        assertEq(kyc.nonces(sender), 1);
-        _setupKYC(sender, 2);
-        assertEq(kyc.nonces(sender), 2);
+        // A fresh address, because BaseTest verifies `sender` during setUp.
+        address fresh = makeAddr("nonceSubject");
+        assertEq(kyc.nonces(fresh), 0);
+        _setupKYC(fresh, 1);
+        assertEq(kyc.nonces(fresh), 1);
+        _setupKYC(fresh, 2);
+        assertEq(kyc.nonces(fresh), 2);
     }
 
     function test_VerifyUser_CanUpgradeTier() public {
@@ -268,19 +270,39 @@ contract KYCRegistryTest is BaseTest {
         kyc.checkAndConsume(sender, 100e6);
     }
 
-    function test_RevertWhen_CheckAndConsume_NoKYC_ExceedsDefaultLimit() public {
-        // sender has no KYC, defaults to Tier 1 (500e6)
-        uint256 exceedLimit = kyc.DEFAULT_T1_LIMIT() + 1e6;
-        vm.expectRevert(abi.encodeWithSelector(IKYCRegistry.DailyLimitExceeded.selector, sender, kyc.DEFAULT_T1_LIMIT(), exceedLimit));
+    /// @dev An unverified wallet is blocked outright, at ANY amount. Previously
+    ///      `checkAndConsume` silently promoted tier 0 to tier 1, so a wallet
+    ///      that had never been verified could send up to 500 QUSD a day.
+    function test_RevertWhen_CheckAndConsume_Unverified_IsBlocked() public {
+        address unverified = makeAddr("unverified");
+        assertEq(kyc.getKYCLevel(unverified), 0);
+
+        vm.expectRevert(abi.encodeWithSelector(IKYCRegistry.KYCRequired.selector, unverified, uint8(0)));
         vm.prank(address(remit));
-        kyc.checkAndConsume(sender, exceedLimit);
+        kyc.checkAndConsume(unverified, 1e6);
     }
 
-    function test_RevertWhen_CheckAndConsume_NoKYC_SucceedsWithinLimit() public {
-        // sender has no KYC, defaults to Tier 1 (500e6). 100e6 should succeed.
+    function test_RevertWhen_CheckAndConsume_Unverified_BlockedEvenForDust() public {
+        address unverified = makeAddr("unverified2");
+        vm.expectRevert(abi.encodeWithSelector(IKYCRegistry.KYCRequired.selector, unverified, uint8(0)));
         vm.prank(address(remit));
-        kyc.checkAndConsume(sender, 100e6);
-        assertEq(kyc.getDailyUsage(sender), 100e6);
+        kyc.checkAndConsume(unverified, 1);
+    }
+
+    function test_CheckAndConsume_Unverified_AllowedOnceGovernanceOpensTier0() public {
+        address unverified = makeAddr("unverified3");
+
+        vm.prank(owner);
+        kyc.setDailyLimit(0, 50e6);
+
+        vm.prank(address(remit));
+        kyc.checkAndConsume(unverified, 25e6);
+        assertEq(kyc.getDailyUsage(unverified), 25e6);
+
+        // The tier-0 ceiling still applies.
+        vm.expectRevert(abi.encodeWithSelector(IKYCRegistry.DailyLimitExceeded.selector, unverified, 50e6, 55e6));
+        vm.prank(address(remit));
+        kyc.checkAndConsume(unverified, 30e6);
     }
 
     function test_RevertWhen_CheckAndConsume_ExceedsLimit_Exactly() public {
@@ -309,8 +331,34 @@ contract KYCRegistryTest is BaseTest {
     // getDailyLimit — tiers
     // =========================================================================
 
-    function test_GetDailyLimit_Tier0_ReturnsDefaultTier1() public view {
-        assertEq(kyc.getDailyLimit(sender), kyc.DEFAULT_T1_LIMIT());
+    /// @dev Tier 0 reports a zero allowance rather than masquerading as Tier 1.
+    function test_GetDailyLimit_Tier0_IsZero() public {
+        address unverified = makeAddr("unverified4");
+        assertEq(kyc.getDailyLimit(unverified), 0);
+    }
+
+    function test_GetKYCLevel_Tier0_ReportsZeroNotOne() public {
+        address unverified = makeAddr("unverified5");
+        assertEq(kyc.getKYCLevel(unverified), 0);
+    }
+
+    function test_GetRemainingDailyLimit_TracksUsage() public {
+        assertEq(kyc.getRemainingDailyLimit(sender), kyc.DEFAULT_T1_LIMIT());
+
+        vm.prank(address(remit));
+        kyc.checkAndConsume(sender, 200e6);
+
+        assertEq(kyc.getRemainingDailyLimit(sender), kyc.DEFAULT_T1_LIMIT() - 200e6);
+    }
+
+    function test_GetRemainingDailyLimit_ZeroWhenUnverified() public {
+        assertEq(kyc.getRemainingDailyLimit(makeAddr("unverified6")), 0);
+    }
+
+    function test_SetDailyLimit_Tier0_IsAllowed() public {
+        vm.prank(owner);
+        kyc.setDailyLimit(0, 100e6);
+        assertEq(kyc.dailyLimits(0), 100e6);
     }
 
     function test_GetDailyLimit_Tier1() public {

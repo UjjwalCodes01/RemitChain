@@ -35,6 +35,7 @@ contract Deploy is Script {
         address qusd = vm.envAddress("QUSD_ADDRESS");
         address feeTreasury = vm.envAddress("FEE_TREASURY_ADDRESS");
 
+        _assertLaunchSafe(deployer, multisig, passOracle, qusd, feeTreasury);
         _logConfig(deployer, multisig, passOracle, qusd, feeTreasury);
 
         vm.startBroadcast(deployerKey);
@@ -43,6 +44,58 @@ contract Deploy is Script {
 
         _writeDeploymentJson(deployer, multisig, passOracle, qusd, feeTreasury);
         _logVerificationCommands();
+    }
+
+    /// @notice Refuses to deploy a configuration that cannot safely hold real money.
+    /// @dev    The mainnet deployment of 2026-05 was made against `MockQUSD` — an
+    ///         owner-mintable ERC20 with no backing and no redemption path. It is a
+    ///         perfectly good test token and cannot carry value, so a production
+    ///         deployment pointed at one would be a remittance service settling in
+    ///         a token nobody can redeem. These checks make that impossible to do
+    ///         by accident.
+    function _assertLaunchSafe(
+        address deployer,
+        address multisig,
+        address passOracle,
+        address qusd,
+        address feeTreasury
+    ) internal view {
+        require(qusd != address(0), "QUSD_ADDRESS is unset");
+        require(qusd.code.length > 0, "QUSD_ADDRESS has no code on this chain");
+        require(multisig != address(0), "MULTISIG_ADDRESS is unset");
+        require(passOracle != address(0), "PASS_ORACLE_ADDRESS is unset");
+        require(feeTreasury != address(0), "FEE_TREASURY_ADDRESS is unset");
+
+        // Mainnet-only requirements.
+        if (block.chainid == 1990) {
+            // A single EOA holding both the timelock's proposer role and the
+            // oracle key removes the point of having a timelock at all.
+            require(
+                multisig != deployer,
+                "Mainnet: MULTISIG_ADDRESS must not be the deployer - use a Gnosis Safe"
+            );
+            require(
+                passOracle != deployer,
+                "Mainnet: PASS_ORACLE_ADDRESS must not be the deployer - use a dedicated oracle key"
+            );
+            require(
+                multisig.code.length > 0,
+                "Mainnet: MULTISIG_ADDRESS must be a contract (Gnosis Safe), not an EOA"
+            );
+
+            // Reject the known mock token explicitly, and reject anything that
+            // exposes a permissionless-looking mint by name.
+            require(
+                qusd != 0x9b5D310a92F05C3714E4163e43f226c7A6FB0827,
+                "Mainnet: QUSD_ADDRESS is MockQUSD - point at the real stablecoin"
+            );
+
+            // A real stablecoin reports 6 decimals here; the protocol's
+            // MIN_AMOUNT and fee maths assume it.
+            (bool ok, bytes memory data) = qusd.staticcall(abi.encodeWithSignature("decimals()"));
+            require(ok && data.length >= 32, "Mainnet: QUSD_ADDRESS does not implement decimals()");
+            require(abi.decode(data, (uint8)) == 6, "Mainnet: QUSD must have 6 decimals");
+        }
     }
 
     function _deployAll(address deployer, address multisig, address passOracle, address qusd, address feeTreasury)

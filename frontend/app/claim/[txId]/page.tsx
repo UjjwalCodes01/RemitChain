@@ -15,29 +15,35 @@ export default function ClaimPage() {
   const txId = typeof params.txId === 'string' ? params.txId : Array.isArray(params.txId) ? params.txId[0] : ''
   const transferId = txId.startsWith('0x') ? (txId as `0x${string}`) : `0x${txId}` as `0x${string}`
 
-  const IS_DEMO = process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
-  const otpFromUrl = searchParams.get('otp')
-  const judgeToken = searchParams.get('judge')
-  const [isJudgeVerified, setIsJudgeVerified] = useState(false)
-  const [demoRevealed, setDemoRevealed] = useState(false)
+  /**
+   * The claim secret travels in the URL FRAGMENT (`#s=…`), never the query
+   * string, so it is not sent to the server in the request line, does not
+   * appear in access logs or Referer headers, and is not captured by any CDN
+   * in between. Only this page's JavaScript ever reads it.
+   */
+  const [claimSecret, setClaimSecret] = useState<string | null>(null)
+  const [secretMissing, setSecretMissing] = useState(false)
 
-  // Verify judge token on mount/params change if not in public demo mode
   useEffect(() => {
-    if (IS_DEMO || !judgeToken || !transferId || transferId.length !== 66) return
-    fetch(`/api/transfers/${transferId}/demo-otp?judge=${encodeURIComponent(judgeToken)}`)
-      .then(res => {
-        if (res.ok) setIsJudgeVerified(true)
-      })
-      .catch(() => {})
-  }, [transferId, judgeToken, IS_DEMO])
-
-  const showDemoCard = IS_DEMO || isJudgeVerified
+    const hash = typeof window !== 'undefined' ? window.location.hash : ''
+    const match = /[#&]s=([A-Za-z0-9_-]{43})/.exec(hash)
+    if (match) {
+      setClaimSecret(match[1])
+      // Drop it from the address bar so it does not linger in browser history
+      // or get copied out of the URL by the recipient.
+      window.history.replaceState(null, '', window.location.pathname)
+    } else {
+      setSecretMissing(true)
+    }
+  }, [])
 
   const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState(['', '', '', '', '', ''])
   const [payoutId, setPayoutId] = useState('')
   const [claimedPayoutId, setClaimedPayoutId] = useState('')
   const [claimedRailName, setClaimedRailName] = useState('')
+  const [payoutStatus, setPayoutStatus] = useState<string | null>(null)
+  const [payoutLive, setPayoutLive] = useState(true)
   const [claimState, setClaimState] = useState<'idle' | 'submitting' | 'success' | 'idempotent' | 'error' | 'locked'>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const [retryAfterMs, setRetryAfterMs] = useState(0)
@@ -182,7 +188,8 @@ export default function ClaimPage() {
           transferId,
           otp: otp.join(''),
           recipientPhone: phone.trim(),
-          payoutId: payoutId.trim(),
+          payoutDestination: payoutId.trim(),
+          claimSecret: claimSecret ?? undefined,
         })
       })
 
@@ -205,28 +212,32 @@ export default function ClaimPage() {
 
       if (!res.ok) {
         // Map relayer errors to user-friendly messages
-        let friendly = data.error || 'Failed to claim transfer'
-        if (friendly.includes('Phone number does not match')) {
-          friendly = "That phone number doesn't match this transfer. Use the same number the sender used."
-        } else if (friendly.includes('Invalid OTP')) {
-          friendly = 'Incorrect code. Double-check the 6 digits and try again.'
-        } else if (friendly.includes('expired')) {
-          friendly = 'This transfer has expired. The sender has been refunded.'
-        } else if (friendly.includes('not in a claimable state')) {
-          friendly = 'This transfer has already been claimed or cancelled.'
+        // The server already returns recipient-facing copy, and deliberately
+        // uses ONE message for both a wrong phone number and a wrong code —
+        // telling them apart would confirm to an attacker which half they had
+        // already guessed. Do not re-split them here.
+        let friendly = data.error || 'We could not complete your claim. Please try again.'
+        if (typeof data.attemptsRemaining === 'number' && data.attemptsRemaining > 0) {
+          friendly += ` ${data.attemptsRemaining} attempt${data.attemptsRemaining === 1 ? '' : 's'} remaining.`
         }
         throw new Error(friendly)
       }
 
-      // idempotent = already claimed on-chain before this session
+      // `idempotent` means the escrow had already been released before this
+      // attempt — show the existing payout rather than implying a fresh one.
+      if (data.payout) {
+        setPayoutStatus(data.payout.status)
+        setPayoutLive(data.payout.live !== false)
+        setClaimedRailName(data.payout.rail ?? railName)
+      } else {
+        setPayoutStatus(data.payoutStatus ?? 'CREATED')
+        setClaimedRailName(railName)
+      }
+
       if (data.idempotent) {
-        if (data.offrampMethod) {
-          setClaimedRailName(data.offrampMethod)
-        }
         setClaimState('idempotent')
       } else {
         setClaimedPayoutId(payoutId.trim())
-        setClaimedRailName(railName)
         setClaimState('success')
       }
       if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([30, 50, 30])
@@ -357,49 +368,25 @@ export default function ClaimPage() {
                 </p>
               </div>
 
-                {/* Demo Mode — OTP Reveal (only shown when ?otp= param present and showDemoCard is true) */}
-                {showDemoCard && otpFromUrl && (
+                {/* Warn when the link is missing its secret. A recipient who
+                    pasted only the visible part of the URL, or whose mail
+                    client stripped the fragment, cannot claim — say so up
+                    front instead of after five failed attempts. */}
+                {secretMissing && (
                   <motion.div
-                    className="mb-6 rounded-xl border overflow-hidden text-left"
+                    className="mb-6 rounded-xl border p-4 text-left"
                     style={{ borderColor: 'rgba(245,166,35,0.4)', background: 'rgba(245,166,35,0.06)' }}
                     initial={{ opacity: 0, y: -8 }}
                     animate={{ opacity: 1, y: 0 }}
                   >
-                    <button
-                      onClick={() => {
-                        setDemoRevealed(r => !r)
-                        if (!demoRevealed) {
-                          // Auto-fill the OTP inputs
-                          const digits = otpFromUrl.split('')
-                          if (digits.length === 6) setOtp(digits)
-                        }
-                      }}
-                      className="w-full flex items-center gap-2 px-4 py-3"
-                    >
-                      <FlaskConical className="w-4 h-4 shrink-0" style={{ color: '#F5A623' }} />
-                      <span className="text-sm font-semibold" style={{ color: '#F5A623' }}>Demo Mode — Reveal claim code</span>
-                      <ChevronDown
-                        className="w-4 h-4 ml-auto transition-transform"
-                        style={{ color: '#F5A623', transform: demoRevealed ? 'rotate(180deg)' : 'rotate(0deg)' }}
-                      />
-                    </button>
-                    <AnimatePresence>
-                      {demoRevealed && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="px-4 pb-4 border-t" style={{ borderColor: 'rgba(245,166,35,0.2)' }}>
-                            <p className="text-xs mt-3 mb-1" style={{ color: 'rgba(245,166,35,0.7)' }}>Claim code (auto-filled above):</p>
-                            <div className="text-3xl font-black font-mono tracking-[0.2em]" style={{ color: 'var(--color-text-primary)' }}>
-                              {otpFromUrl}
-                            </div>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                    <p className="text-sm font-semibold mb-1" style={{ color: '#F5A623' }}>
+                      This link looks incomplete
+                    </p>
+                    <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                      Open the full link exactly as it appeared in your message — including
+                      everything after the <code>#</code>. If you typed it by hand, tap the
+                      original link instead, or ask the sender to resend it.
+                    </p>
                   </motion.div>
                 )}
 

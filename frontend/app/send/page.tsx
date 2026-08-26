@@ -6,10 +6,9 @@ import { useAccount, useChainId, usePublicClient, useWriteContract } from 'wagmi
 import { ArrowRight, ChevronDown, CheckCircle2, Loader2, Phone, Mail, UserCircle2, AlertCircle, X } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { encodeAbiParameters, encodePacked, keccak256, parseUnits, toHex } from 'viem'
+import { parseUnits } from 'viem'
 import { NavBar } from '@/components/NavBar'
 import { useChainGuard } from '@/hooks/useChainGuard'
-import { env } from '@/lib/env'
 import { REMITCHAIN_ADDRESS, ESCROW_VAULT_ADDRESS, QUSD_ADDRESS, QUSD_DECIMALS, RemitChainAbi, ERC20Abi } from '@/lib/contracts'
 import { activeChain } from '@/lib/chains'
 import { VoiceInput } from '@/components/VoiceInput'
@@ -17,16 +16,31 @@ import { verifyBiometric, isBiometricRegistered } from '@/lib/biometric/webauthn
 import { getContact } from '@/lib/contacts/db'
 import type { Contact } from '@/lib/contacts/types'
 
-// Seeded FX rates — TODO(qie): replace with QIE Oracle live rate
-const CORRIDORS = [
-  { id: 'ae-in', label: '🇦🇪 UAE → 🇮🇳 India', symbol: '₹', rate: 83.45, rail: 'UPI', code: 'INR' },
-  { id: 'us-mx', label: '🇺🇸 USA → 🇲🇽 Mexico', symbol: 'MX$', rate: 17.12, rail: 'SPEI', code: 'MXN' },
-  { id: 'gb-ng', label: '🇬🇧 UK → 🇳🇬 Nigeria', symbol: '₦', rate: 2018, rail: 'OPay', code: 'NGN' },
-  { id: 'sa-pk', label: '🇸🇦 Saudi → 🇵🇰 Pakistan', symbol: '₨', rate: 75.2, rail: 'JazzCash', code: 'PKR' },
-  { id: 'sg-bd', label: '🇸🇬 Singapore → 🇧🇩 Bangladesh', symbol: '৳', rate: 82.4, rail: 'bKash', code: 'BDT' },
-] as const
-
-type CorridorId = (typeof CORRIDORS)[number]['id']
+/**
+ * Corridors and FX rates are served by /api/corridors rather than compiled in.
+ *
+ * The previous version hard-coded five corridors with fixed rates (₹83.45,
+ * ₦2018, …) from source control. Four of them had no working payout rail at
+ * all, and the rate shown to the sender had no relationship to the rate the
+ * payout would actually use. A corridor now only appears here if a real payout
+ * provider is configured for it AND a live rate is available.
+ */
+interface CorridorInfo {
+  id: string
+  index: number
+  label: string
+  flags: string
+  rail: string
+  currency: string
+  symbol: string
+  minorUnits: number
+  recvCountry: string
+  open: boolean
+  live: boolean
+  rate: number | null
+  rateSource: 'live' | 'seeded' | null
+  closedReason?: string
+}
 
 const FEE_BPS = 10 // 0.1%
 
@@ -46,18 +60,36 @@ export default function SendPage() {
     const cid = searchParams.get('contactId')
     if (cid) getContact(cid).then(c => c && setContact(c))
   }, [searchParams])
-  const [corridorId, setCorridorId] = useState<CorridorId>('ae-in')
+  const [corridors, setCorridors] = useState<CorridorInfo[]>([])
+  const [corridorsLoading, setCorridorsLoading] = useState(true)
+  const [corridorId, setCorridorId] = useState<string>('')
   const [showCorridorPicker, setShowCorridorPicker] = useState(false)
-  const [sendState, setSendState] = useState<'idle' | 'signing' | 'broadcasting' | 'success'>('idle')
+  const [sendState, setSendState] = useState<'idle' | 'preparing' | 'approving' | 'signing' | 'broadcasting' | 'confirming'>('idle')
   const [sendError, setSendError] = useState<string | null>(null)
-  const [otpCode, setOtpCode] = useState<string | null>(null)
-  const [txHash, setTxHash] = useState<string | null>(null)
 
-  const corridor = CORRIDORS.find(c => c.id === corridorId) ?? CORRIDORS[0]
+  // Load the corridors that are genuinely sendable right now.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/corridors')
+      .then(r => r.json())
+      .then((data: { corridors: CorridorInfo[] }) => {
+        if (cancelled) return
+        setCorridors(data.corridors ?? [])
+        // Default to the first OPEN corridor, never to a closed one.
+        const firstOpen = (data.corridors ?? []).find(c => c.open)
+        if (firstOpen) setCorridorId(prev => prev || firstOpen.id)
+      })
+      .catch(() => { if (!cancelled) setCorridors([]) })
+      .finally(() => { if (!cancelled) setCorridorsLoading(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  const corridor = corridors.find(c => c.id === corridorId) ?? null
+  const openCorridors = corridors.filter(c => c.open)
   const numericAmount = Math.max(0, parseFloat(rawInput) || 0)
   const fee = numericAmount * (FEE_BPS / 10000)
   const net = numericAmount - fee
-  const recipientAmount = net * corridor.rate
+  const recipientAmount = corridor?.rate ? net * corridor.rate : 0
 
   // Spring-animated display strings
   const springRecipient = useSpring(recipientAmount, { stiffness: 80, damping: 18, mass: 0.6 })
@@ -98,66 +130,59 @@ export default function SendPage() {
   // ─── Send Flow ─────────────────────────────────────────────────────────────
 
   const handleSend = async () => {
-    if (!address || numericAmount < 1 || !phone) return
+    if (!address || !corridor || !corridor.open || numericAmount < 1 || !phone) return
     setSendError(null)
-    setSendState('signing')
-
-    // Fetch senderNonce via a plain eth_call — avoids wagmi multicall issues on QIE RPC
-    let freshSenderNonce: bigint
-    try {
-      if (!publicClient) throw new Error('No RPC client')
-      freshSenderNonce = await publicClient.readContract({
-        address: REMITCHAIN_ADDRESS,
-        abi: RemitChainAbi,
-        functionName: 'senderNonces',
-        args: [address],
-      }) as bigint
-    } catch (e) {
-      console.error('[send] Failed to read senderNonce:', e)
-      setSendState('idle')
-      setSendError(`Could not connect to QIE network. Check your connection and that your wallet is on ${activeChain.name} (chain ${activeChain.id}).`)
-      return
-    }
 
     try {
-      // Biometric is optional — only prompt if a credential is already registered.
-      // The real security gate is the wallet signature below.
+      // Biometric is optional — only prompt when a credential exists on this
+      // device. The wallet signature below is the real authorisation.
       const credRegistered = await isBiometricRegistered().catch(() => false)
       if (credRegistered) {
         const bioOk = await verifyBiometric()
         if (!bioOk) { setSendState('idle'); return }
       }
 
-      const remitNonce = freshSenderNonce
+      // ── 1. Prepare ────────────────────────────────────────────────────────
+      // The server mints the OTP and claim secret, derives the phone and OTP
+      // commitments, and hands back exactly the arguments to sign. None of
+      // that happens in the browser any more: the OTP used to come from
+      // Math.random() here, and the phone salt was a constant in this bundle.
+      setSendState('preparing')
 
-      // 1. Generate 6-digit OTP
-      const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString()
-      const otpReveal = toHex(BigInt(generatedOtp), { size: 32 })
+      const prepareRes = await fetch('/api/transfers/prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderAddress: address,
+          corridorId,
+          amount: parseUnits(numericAmount.toString(), QUSD_DECIMALS).toString(),
+          phone,
+          email: email || undefined,
+          nickname: contact?.name ?? undefined,
+        }),
+      })
 
-      // 2. Compute Transfer ID deterministically
-      const encodedId = encodeAbiParameters(
-        [{ type: 'address' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'address' }],
-        [address, remitNonce, BigInt(chainId), REMITCHAIN_ADDRESS]
-      )
-      const transferId = keccak256(encodedId)
+      const prepared = await prepareRes.json()
+      if (!prepareRes.ok) {
+        setSendState('idle')
+        setSendError(prepared.error ?? 'Could not prepare this transfer. Please try again.')
+        return
+      }
 
-      // 3. Compute OTP Commit Hash
-      const relayerAddress = env.NEXT_PUBLIC_RELAYER_ADDRESS as `0x${string}`
-      const encodedCommit = encodeAbiParameters(
-        [{ type: 'bytes32' }, { type: 'bytes32' }, { type: 'address' }],
-        [otpReveal, transferId, relayerAddress]
-      )
-      const otpCommitHash = keccak256(encodedCommit)
+      const { transferId, sendArgs } = prepared as {
+        transferId: `0x${string}`
+        sendArgs: {
+          recipientPhoneHash: `0x${string}`
+          amount: string
+          otpCommitHash: `0x${string}`
+          corridor: number
+        }
+      }
 
-      // 4. Compute Phone Hash
-      const SALT = toHex(BigInt('0xDEADBEEF'), { size: 32 })
-      const phoneHash = keccak256(encodePacked(['bytes32', 'string'], [SALT, phone]))
+      const value = BigInt(sendArgs.amount)
 
-      const value = parseUnits(numericAmount.toString(), QUSD_DECIMALS)
-      const corridorIndex = CORRIDORS.findIndex(c => c.id === corridorId) + 1
-
-      // 5. Step 1 — approve QUSD spend to EscrowVault
-      setSendState('signing') // reuse 'signing' label for approve step
+      // ── 2. Approve the vault to pull QUSD ─────────────────────────────────
+      setSendState('approving')
       const approveTxHash = await writeContractAsync({
         address: QUSD_ADDRESS,
         abi: ERC20Abi,
@@ -165,88 +190,56 @@ export default function SendPage() {
         args: [ESCROW_VAULT_ADDRESS, value],
       })
 
-      // CRITICAL: wait for the approve tx to be mined before calling sendRemittance.
-      // writeContractAsync resolves on submission, not confirmation. If we call
-      // sendRemittance immediately the vault sees allowance = 0 and safeTransferFrom reverts.
+      // writeContractAsync resolves on submission, not on inclusion. Calling
+      // sendRemittance before the approval is mined leaves the vault with a
+      // zero allowance and safeTransferFrom reverts.
       if (publicClient) {
         await publicClient.waitForTransactionReceipt({ hash: approveTxHash })
       }
 
-      setSendState('broadcasting')
-
-      // 6. Step 2 — sendRemittance
+      // ── 3. Send ───────────────────────────────────────────────────────────
+      setSendState('signing')
       const tx = await writeContractAsync({
         address: REMITCHAIN_ADDRESS,
         abi: RemitChainAbi,
         functionName: 'sendRemittance',
         args: [
-          phoneHash,
+          sendArgs.recipientPhoneHash,
           value,
-          otpCommitHash,
-          corridorIndex,
+          sendArgs.otpCommitHash,
+          sendArgs.corridor,
         ],
       })
 
-      setTxHash(tx)
-      setOtpCode(generatedOtp)
       if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(50)
 
-      // Normalize phone to E.164 for API validation
-      // Map corridor to country dial code for prefix
-      const CORRIDOR_DIAL_CODE: Record<string, string> = {
-        'ae-in': '+91', 'us-mx': '+52', 'gb-ng': '+234', 'sa-pk': '+92', 'sg-bd': '+880',
-      }
-      const dialCode = CORRIDOR_DIAL_CODE[corridorId] ?? '+91'
-      const digits = phone.replace(/\D/g, '')
-      const cleanPhone = phone.replace(/[\s-]/g, '')
-      // If already has full international digits (>10), just prefix +; otherwise use corridor code
-      const e164Phone = cleanPhone.startsWith('+') ? cleanPhone
-        : digits.length > 10 ? `+${digits}`
-        : `${dialCode}${digits.replace(/^0+/, '')}`
+      // ── 4. Confirm ────────────────────────────────────────────────────────
+      // The server verifies the receipt and only then sends the recipient
+      // their claim link. Awaited, not fire-and-forget: if the notification
+      // cannot be delivered the sender needs to know now, while they can still
+      // cancel for an immediate refund.
+      setSendState('confirming')
 
-      // 1. Persist off-chain metadata to DB — fire-and-forget
-      fetch('/api/transfers/metadata', {
+      const confirmRes = await fetch('/api/transfers/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transferId,
-          txHash: tx,
-          senderAddress: address,
-          recipientNickname: contact?.name ?? null,
-          amount: value.toString(),
-          corridor: corridorId,
-        }),
-      }).catch(err => console.warn('[metadata] Failed (non-fatal):', err))
+        body: JSON.stringify({ transferId, txHash: tx }),
+      })
 
-      // 2. Notify recipient via Email or SMS — fire-and-forget
-      fetch('/api/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transferId,
-          recipientPhone: e164Phone,
-          recipientEmail: email || undefined,
-          otp: generatedOtp,
-          amount: numericAmount,
-          corridor: corridorId,
-          senderName: 'Sender', // optional, could use sender's real name if we had it
-        }),
-      }).then(async r => {
-        if (!r.ok) console.warn('[notify] 400:', await r.json().catch(() => r.text()))
-      }).catch(err => console.warn('[notify] Failed (non-fatal):', err))
+      const confirmed = await confirmRes.json().catch(() => ({}))
 
-      // 3. In demo mode or if judge token is provided, persist plaintext OTP so the tracker can surface it on-screen
-      const judgeToken = searchParams.get('judge')
-      if (process.env.NEXT_PUBLIC_DEMO_MODE === 'true' || judgeToken) {
-        const url = `/api/transfers/${transferId}/demo-otp${judgeToken ? `?judge=${encodeURIComponent(judgeToken)}` : ''}`
-        fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ otp: generatedOtp }),
-        }).catch(err => console.warn('[demo-otp] store failed (non-fatal):', err))
+      if (!confirmRes.ok && confirmRes.status !== 202) {
+        setSendState('idle')
+        setSendError(
+          confirmed.error ??
+          'Your funds are locked on-chain but we could not notify the recipient. ' +
+          'Open the transfer to resend, or cancel it for a refund.',
+        )
+        router.push(`/transfer/${transferId}`)
+        return
       }
 
-      router.push(`/transfer/${transferId}${judgeToken ? `?judge=${encodeURIComponent(judgeToken)}` : ''}`)
+      router.push(`/transfer/${transferId}`)
 
     } catch (err: unknown) {
       console.error(err)
@@ -260,7 +253,9 @@ export default function SendPage() {
       } else if (raw.includes('InsufficientBalance') || raw.includes('transfer amount exceeds balance')) {
         friendly = 'Your QUSD balance is too low for this transfer.'
       } else if (raw.includes('DailyLimitExceeded')) {
-        friendly = 'Daily KYC transfer limit reached. Try a smaller amount.'
+        friendly = 'You have reached your daily sending limit. Try a smaller amount, or verify your identity in Settings to raise it.'
+      } else if (raw.includes('KYCRequired')) {
+        friendly = 'Verify your identity in Settings before sending.'
       } else if (raw.includes('network') || raw.includes('fetch') || raw.includes('timeout')) {
         friendly = 'Network error. Check your connection and try again.'
       } else if (raw.length > 120) {
@@ -270,7 +265,13 @@ export default function SendPage() {
     }
   }
 
-  const canSend = isConnected && !wrongChain && numericAmount >= 1 && phone.length >= 8 && sendState === 'idle'
+  const canSend =
+    isConnected &&
+    !wrongChain &&
+    Boolean(corridor?.open) &&
+    numericAmount >= 1 &&
+    phone.length >= 8 &&
+    sendState === 'idle'
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-ink)' }}>
@@ -319,7 +320,7 @@ export default function SendPage() {
               aria-expanded={showCorridorPicker}
               aria-haspopup="listbox"
             >
-              <span>{corridor.label}</span>
+              <span>{corridor ? `${corridor.flags}  ${corridor.label}` : corridorsLoading ? 'Loading destinations…' : 'No destinations available'}</span>
               <ChevronDown
                 className="w-4 h-4 transition-transform"
                 style={{
@@ -346,35 +347,51 @@ export default function SendPage() {
                   exit={{ opacity: 0, y: -8, scale: 0.98 }}
                   transition={{ duration: 0.15, ease: [0.32, 0.72, 0, 1] }}
                 >
-                  {CORRIDORS.map(c => (
+                  {corridors.map(c => (
                     <button
                       key={c.id}
                       role="option"
                       aria-selected={c.id === corridorId}
+                      // A corridor with no working payout rail cannot be
+                      // chosen. It stays visible, greyed out, with the reason
+                      // shown — silently hiding it would make the product look
+                      // like it never supported that country.
+                      disabled={!c.open}
                       onClick={() => {
+                        if (!c.open) return
                         setCorridorId(c.id)
                         setShowCorridorPicker(false)
                       }}
-                      className="w-full flex items-center justify-between px-4 py-3 text-sm transition-colors text-left"
+                      className="w-full flex items-center justify-between gap-3 px-4 py-3 text-sm transition-colors text-left"
                       style={{
                         background: c.id === corridorId ? 'var(--color-mint-dim)' : 'transparent',
-                        color: c.id === corridorId ? 'var(--color-mint)' : 'var(--color-text-secondary)',
-                      }}
-                      onMouseEnter={e => {
-                        if (c.id !== corridorId) {
-                          (e.currentTarget as HTMLButtonElement).style.background = 'var(--color-surface)'
-                        }
-                      }}
-                      onMouseLeave={e => {
-                        if (c.id !== corridorId) {
-                          (e.currentTarget as HTMLButtonElement).style.background = 'transparent'
-                        }
+                        color: !c.open
+                          ? 'var(--color-text-tertiary)'
+                          : c.id === corridorId
+                            ? 'var(--color-mint)'
+                            : 'var(--color-text-secondary)',
+                        cursor: c.open ? 'pointer' : 'not-allowed',
+                        opacity: c.open ? 1 : 0.55,
                       }}
                     >
-                      <span>{c.label}</span>
-                      <span className="text-xs opacity-60">via {c.rail}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate">{c.flags}  {c.label}</span>
+                        {!c.open && c.closedReason && (
+                          <span className="block text-xs mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>
+                            {c.closedReason}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-xs opacity-60 shrink-0">
+                        {c.open ? `via ${c.rail}` : 'Unavailable'}
+                      </span>
                     </button>
                   ))}
+                  {!corridorsLoading && corridors.length === 0 && (
+                    <div className="px-4 py-3 text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+                      Destinations could not be loaded. Please refresh.
+                    </div>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -536,7 +553,7 @@ export default function SendPage() {
                   Recipient gets
                 </p>
                 <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                  via {corridor.rail}
+                  {corridor ? `via ${corridor.rail}` : '—'}
                 </p>
               </div>
               <div className="flex items-baseline gap-1">
@@ -545,7 +562,7 @@ export default function SendPage() {
                   style={{ color: numericAmount > 0 ? 'var(--color-mint)' : 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}
                   aria-hidden
                 >
-                  {corridor.symbol}
+                  {corridor?.symbol ?? ''}
                 </span>
                 <motion.span
                   key={displayRecipient}
@@ -559,14 +576,27 @@ export default function SendPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.12 }}
                   aria-live="polite"
-                  aria-label={`Recipient receives ${corridor.symbol}${recipientAmount.toFixed(2)} ${corridor.code}`}
+                  aria-label={`Recipient receives ${corridor?.symbol ?? ''}${recipientAmount.toFixed(2)} ${corridor?.currency ?? ''}`}
                 >
                   {displayRecipient}
                 </motion.span>
               </div>
               <p className="text-xs mt-1.5" style={{ color: 'var(--color-text-tertiary)' }}>
-                Rate: 1 QUSD = {corridor.symbol}{corridor.rate.toLocaleString()} · Fee: 0.1% (${fee.toFixed(2)})
+                {corridor?.rate
+                  ? `Rate: 1 QUSD = ${corridor.symbol}${corridor.rate.toLocaleString(undefined, { maximumFractionDigits: 4 })} · Fee: 0.1% ($${fee.toFixed(2)})`
+                  : `Fee: 0.1% ($${fee.toFixed(2)})`}
               </p>
+              {corridor?.rate && (
+                <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
+                  This rate is locked when you send — the recipient is paid at it
+                  regardless of how the market moves before they claim.
+                </p>
+              )}
+              {corridor && !corridor.live && (
+                <p className="text-xs mt-1.5 font-semibold" style={{ color: '#F5A623' }}>
+                  Test rail — no real money will reach the recipient.
+                </p>
+              )}
             </div>
           </div>
 
@@ -626,26 +656,40 @@ export default function SendPage() {
                     ? 'Minimum 1 QUSD required'
                     : wrongChain
                       ? `Switch to ${activeChain.name} first`
-                      : !phone
-                        ? 'Enter recipient phone'
-                        : 'Enter amount'
+                      : !corridor?.open
+                        ? 'This destination is unavailable'
+                        : !phone
+                          ? 'Enter recipient phone'
+                          : 'Enter amount'
                   : `Send $${numericAmount} QUSD`
               }
               aria-disabled={!canSend || sendState !== 'idle'}
               onClick={handleSend}
             >
-              {sendState === 'signing' ? (
+              {sendState === 'preparing' ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" aria-hidden />
+                  Preparing transfer...
+                </>
+              ) : sendState === 'approving' ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" aria-hidden />
                   Approving QUSD...
                 </>
-              ) : sendState === 'broadcasting' ? (
+              ) : sendState === 'signing' ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" aria-hidden />
-                  Sending...
+                  Confirm in your wallet...
+                </>
+              ) : sendState === 'confirming' ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" aria-hidden />
+                  Notifying recipient...
                 </>
               ) : numericAmount < 1 ? (
                 'Minimum 1 QUSD'
+              ) : !corridor?.open ? (
+                'Destination unavailable'
               ) : !phone ? (
                 'Enter Phone Number'
               ) : (

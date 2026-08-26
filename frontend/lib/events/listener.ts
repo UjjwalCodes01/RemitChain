@@ -25,6 +25,7 @@ import {
 } from 'viem'
 import { eq, sql } from 'drizzle-orm'
 import { db, eventCursor, transfers } from '@/lib/db'
+import { getCorridorByIndex } from '@/lib/corridors'
 import { REMITCHAIN_ADDRESS } from '@/lib/contracts'
 
 // ── Chain definition (server-only) ────────────────────────────────────────────
@@ -100,13 +101,13 @@ async function getCursor(): Promise<number> {
 async function setCursor(block: bigint): Promise<void> {
   if (!db) return
   const blockNum = Number(block)
-  const nowSec = Math.floor(Date.now() / 1000) // unix seconds — fits in integer column
+  const now = Date.now()
   await db
     .insert(eventCursor)
-    .values({ lastProcessedBlock: blockNum, updatedAt: nowSec })
+    .values({ lastProcessedBlock: blockNum, updatedAt: now })
     .onConflictDoUpdate({
       target: eventCursor.id,
-      set: { lastProcessedBlock: blockNum, updatedAt: nowSec },
+      set: { lastProcessedBlock: blockNum, updatedAt: now },
     })
 }
 
@@ -119,12 +120,15 @@ async function processTransferInitiated(log: Log<bigint, number, false, typeof T
 
   const transferId = args.transferId as string
   const amount = (args.amount ?? 0n).toString()
-  const corridorIndex = Number(args.corridor ?? 0)
-  // expiry is uint64 unix seconds on-chain
-  const expiryUnixSec = Number(args.expiry ?? 0)
-  const nowSec = Math.floor(Date.now() / 1000)
+  const corridor = getCorridorByIndex(Number(args.corridor ?? 0))
+  // `expiry` is a uint64 of unix SECONDS on-chain; this schema stores ms.
+  const expiryMs = Number(args.expiry ?? 0) * 1000
+  const now = Date.now()
 
-  // Idempotent upsert — if row already exists (from POST /api/transfers/metadata), merge
+  // Idempotent. In the normal flow /api/transfers/prepare has already written
+  // this row with the off-chain metadata (recipient contact, quote, encrypted
+  // claim credentials), so the conflict branch must not clobber any of it —
+  // it only fills in what the chain is authoritative for.
   await db
     .insert(transfers)
     .values({
@@ -133,24 +137,26 @@ async function processTransferInitiated(log: Log<bigint, number, false, typeof T
       senderAddress: args.sender.toLowerCase(),
       recipientPhoneHash: args.recipientPhoneHash as string,
       amount,
-      corridor: String(corridorIndex),
+      corridor: corridor?.id ?? String(args.corridor ?? 0),
       status: 0,
-      smsStatus: 'PENDING',
-      expiry: expiryUnixSec,
-      createdAt: nowSec,
-      updatedAt: nowSec,
+      notifyStatus: 'PENDING',
+      expiry: expiryMs,
+      createdAt: now,
+      updatedAt: now,
     })
     .onConflictDoUpdate({
       target: transfers.id,
       set: {
-        txHash: log.transactionHash ?? undefined,
+        txHash: sql`COALESCE(${transfers.txHash}, ${log.transactionHash ?? null})`,
         senderAddress: args.sender.toLowerCase(),
-        status: sql`GREATEST(${transfers.status}, 0)`, // Don't downgrade status
-        updatedAt: nowSec,
+        amount,
+        expiry: expiryMs,
+        // Never move a transfer backwards: a reorg replay of TransferInitiated
+        // must not reset an already-claimed transfer to pending.
+        status: sql`GREATEST(${transfers.status}, 0)`,
+        updatedAt: now,
       },
     })
-
-  await maybeSendSms(transferId)
 }
 
 async function processTransferClaimed(log: Log<bigint, number, false, typeof TransferClaimedAbi>) {
@@ -159,13 +165,28 @@ async function processTransferClaimed(log: Log<bigint, number, false, typeof Tra
   if (!args.transferId) return
 
   const transferId = args.transferId as string
+  const now = Date.now()
 
   await db
     .update(transfers)
-    .set({ status: 1, claimedAt: Math.floor(Date.now() / 1000), updatedAt: Math.floor(Date.now() / 1000) })
+    .set({
+      status: 1,
+      claimedAt: sql`COALESCE(${transfers.claimedAt}, ${now})`,
+      claimTxHash: sql`COALESCE(${transfers.claimTxHash}, ${log.transactionHash ?? null})`,
+      updatedAt: now,
+      // The credentials are spent. Wiping them here as well as in the claim
+      // route covers a claim submitted directly against the contract.
+      claimSecretEnc: null,
+      otpEnc: null,
+    })
     .where(eq(transfers.id, transferId))
 
-  console.log(JSON.stringify({ level: 'info', step: 'event.claimed', transferId: transferId.slice(0, 10) + '…', ts: new Date().toISOString() }))
+  console.log(JSON.stringify({
+    level: 'info',
+    step: 'event.claimed',
+    transferId: transferId.slice(0, 10) + '…',
+    ts: new Date().toISOString(),
+  }))
 }
 
 async function processTransferCancelled(log: Log<bigint, number, false, typeof TransferCancelledAbi>) {
@@ -173,45 +194,23 @@ async function processTransferCancelled(log: Log<bigint, number, false, typeof T
   const args = log.args
   if (!args.transferId) return
 
+  const now = Date.now()
+
   await db
     .update(transfers)
-    .set({ status: 2, updatedAt: Math.floor(Date.now() / 1000) })
+    .set({
+      status: 2,
+      cancelledAt: sql`COALESCE(${transfers.cancelledAt}, ${now})`,
+      updatedAt: now,
+      claimSecretEnc: null,
+      otpEnc: null,
+    })
     .where(eq(transfers.id, args.transferId as string))
-}
-
-// ── SMS trigger ───────────────────────────────────────────────────────────────
-// Only fires if smsStatus is still PENDING (idempotent guard)
-
-async function maybeSendSms(transferId: string): Promise<void> {
-  if (!db) return
-
-  const rows = await db.select().from(transfers).where(eq(transfers.id, transferId)).limit(1)
-  const row = rows[0]
-  if (!row || row.smsStatus !== 'PENDING') return
-
-  const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
-
-  // We don't store the raw phone number (privacy) — the recipient phone is only
-  // known to the sender at send time. The SMS notify endpoint handles this.
-  // Here we log that notification is needed; the /api/notify call is made by
-  // the frontend immediately after send (fire-and-forget). The event listener
-  // just ensures the DB smsStatus is updated to SENT/FAILED.
-
-  // Mark as SENT if the SMS was already dispatched via the send flow.
-  // If PENDING here, it means the frontend notify call may have failed.
-  // We can't resend without the recipient's phone — mark as FAILED for visibility.
-  await db
-    .update(transfers)
-    .set({ smsStatus: 'FAILED', updatedAt: Math.floor(Date.now() / 1000) })
-    .where(eq(transfers.id, transferId))
 
   console.log(JSON.stringify({
-    level: 'warn',
-    step: 'event.sms_not_dispatched',
-    transferId: transferId.slice(0, 10) + '…',
-    note: 'SMS was not sent via /api/notify — recipient phone not stored server-side',
+    level: 'info',
+    step: 'event.cancelled',
+    transferId: (args.transferId as string).slice(0, 10) + '…',
     ts: new Date().toISOString(),
   }))
 }

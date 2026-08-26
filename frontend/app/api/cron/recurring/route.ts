@@ -11,18 +11,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { lte, eq, and } from 'drizzle-orm'
 import { db, schedules } from '@/lib/db'
+import { authenticateCron } from '@/lib/http'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET
-
-  if (process.env.NODE_ENV === 'production' && cronSecret) {
-    if (auth !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+  const auth = authenticateCron(req)
+  if (!auth.ok) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   if (!db) {

@@ -9,7 +9,6 @@ import { wagmiConfig } from '@/lib/wagmi'
 import { BiometricGateClient } from '@/components/BiometricGateClient'
 import { PushPermissionPrompt } from '@/components/PushPermissionPrompt'
 import { ServiceWorkerRegistration } from '@/components/ServiceWorker'
-import { DemoBannerClient } from '@/components/DemoBannerClient'
 import { defaultLocale } from '@/lib/i18n/config'
 import { Analytics } from '@vercel/analytics/react'
 import './globals.css'
@@ -84,7 +83,6 @@ export default async function RootLayout({
           <Web3Provider initialState={initialState}>
             <BiometricGateClient>
               <div id="app-root" className="min-h-screen flex flex-col">
-                <DemoBannerClient />
                 {children}
               </div>
               <PushPermissionPrompt />

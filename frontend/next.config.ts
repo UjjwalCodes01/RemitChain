@@ -4,11 +4,19 @@ import createNextIntlPlugin from 'next-intl/plugin'
 const withNextIntl = createNextIntlPlugin('./lib/i18n/request.ts')
 
 const nextConfig: NextConfig = {
+  // Type errors used to be ignored at build time. On a codebase that moves
+  // money, a type error is exactly the class of bug you want the build to
+  // catch — a mismatched unit or a missing null check reaches production
+  // otherwise. The build now fails on them.
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
-  // Allow reading absolute paths from node_modules
-  experimental: {},
+
+  // Never ship a source map that reveals server-side logic to the browser.
+  productionBrowserSourceMaps: false,
+
+  // `x-powered-by: Next.js` is free reconnaissance.
+  poweredByHeader: false,
 
   // Ensure cookies work properly with wagmi SSR
   async headers() {
@@ -30,7 +38,12 @@ const nextConfig: NextConfig = {
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           {
             key: 'Permissions-Policy',
-            value: 'camera=(), microphone=(), geolocation=(), payment=()',
+            value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()',
+          },
+          // Force HTTPS for two years including subdomains.
+          {
+            key: 'Strict-Transport-Security',
+            value: 'max-age=63072000; includeSubDomains; preload',
           },
           {
             key: 'Content-Security-Policy',
@@ -41,8 +54,11 @@ const nextConfig: NextConfig = {
               // Inline styles from emotion/framer/tailwind
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com",
-              // QIE RPC, Resend, Razorpay, open.er-api.com FX, Neon DB
-              "connect-src 'self' https://*.qie.digital wss://*.qie.digital https://api.resend.com https://api.razorpay.com https://open.er-api.com https://*.neon.tech https://*.upstash.io",
+              // The browser only ever talks to our own API and the QIE RPC.
+              // Razorpay, Resend, Neon, Upstash and the FX API are reached
+              // exclusively from server routes, so allowing the browser to
+              // connect to them only widened the exfiltration surface.
+              "connect-src 'self' https://*.qie.digital wss://*.qie.digital",
               "img-src 'self' data: blob:",
               "frame-src 'none'",
               "object-src 'none'",

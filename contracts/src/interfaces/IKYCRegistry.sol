@@ -35,6 +35,8 @@ interface IKYCRegistry {
     error CallerNotRemitChain(address caller);
     error InsufficientKYC(address user, uint8 needed, uint8 has);
     error DailyLimitExceeded(address user, uint256 limit, uint256 wouldBe);
+    /// @notice Thrown when a wallet whose tier carries a zero daily limit attempts to send.
+    error KYCRequired(address user, uint8 level);
     error ZeroAddress();
 
     // =========================================================================
@@ -57,6 +59,11 @@ interface IKYCRegistry {
     /// @param user The wallet address to query.
     /// @return     Daily limit in QUSD base units (0 if unverified).
     function getDailyLimit(address user) external view returns (uint256);
+
+    /// @notice Returns how much the address may still send during the current UTC day.
+    /// @param user The wallet address to query.
+    /// @return     Remaining allowance in QUSD base units.
+    function getRemainingDailyLimit(address user) external view returns (uint256);
 
     /// @notice Checks whether a send of `amount` is within the user's daily limit and records it.
     /// @dev    Only callable by the RemitChain contract. Reverts on breach.

@@ -1,45 +1,80 @@
 /**
- * app/api/health/route.ts
  * GET /api/health
  *
- * System health check — surfaces missing env vars and service status.
- * Safe to expose publicly (returns no secrets, only boolean availability flags).
+ * Operational readiness. Safe to expose publicly — booleans and corridor
+ * status only, never a secret or a value derived from one.
+ *
+ * The previous version reported `status: 'ok'` whenever the database and
+ * relayer were configured, and always returned HTTP 200 with the comment
+ * "degraded is not an error". A remittance service that cannot pay anyone is
+ * not healthy, and an uptime monitor that only ever sees 200 cannot tell you
+ * so. This returns 503 when the product genuinely cannot do its job.
  */
 
 import { NextResponse } from 'next/server'
+import { IS_PRODUCTION_CHAIN, env } from '@/lib/env'
 import { isDbAvailable } from '@/lib/db'
 import { getRedis } from '@/lib/db/redis'
+import { describeCorridorReadiness } from '@/lib/payouts/registry'
+import { isEncryptionConfigured } from '@/lib/crypto/secretbox'
+import { isPhonePepperConfigured } from '@/lib/phone'
 
+export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const dbOk = isDbAvailable()
-  const redisOk = getRedis() !== null
-  const relayerOk = !!(process.env.RELAYER_PRIVATE_KEY && process.env.NEXT_PUBLIC_RELAYER_ADDRESS)
-  const twilioOk = !!(process.env.TWILIO_SID && process.env.TWILIO_AUTH_TOKEN)
-  const razorpayOk = !!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET)
-  const vapidOk = !!(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY)
-  const cronOk = !!process.env.CRON_SECRET
-
-  const allCritical = dbOk && relayerOk
-
-  return NextResponse.json(
-    {
-      status: allCritical ? 'ok' : 'degraded',
-      services: {
-        database: dbOk ? 'connected' : 'missing DATABASE_URL',
-        redis: redisOk ? 'connected' : 'missing UPSTASH_REDIS_REST_URL',
-        relayer: relayerOk ? 'configured' : 'missing RELAYER_PRIVATE_KEY',
-        twilio: twilioOk ? 'configured' : 'stub mode (add TWILIO_SID)',
-        razorpay: razorpayOk ? 'configured' : 'stub mode (add RAZORPAY_KEY_ID)',
-        vapid: vapidOk ? 'configured' : 'missing VAPID keys',
-        cron: cronOk ? 'protected' : 'unprotected (add CRON_SECRET)',
-      },
-      timestamp: new Date().toISOString(),
-    },
-    {
-      status: allCritical ? 200 : 200, // Always 200 — degraded is not an error
-      headers: { 'Cache-Control': 'no-store' },
-    },
+  const database = isDbAvailable()
+  const redis = getRedis() !== null
+  const relayer = Boolean(process.env.RELAYER_PRIVATE_KEY && env.NEXT_PUBLIC_RELAYER_ADDRESS)
+  const encryption = isEncryptionConfigured()
+  const phonePepper = isPhonePepperConfigured()
+  const cron = Boolean(process.env.CRON_SECRET)
+  const notifications = Boolean(
+    process.env.RESEND_API_KEY ||
+    (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) ||
+    (process.env.TWILIO_SID && process.env.TWILIO_AUTH_TOKEN),
   )
+
+  const corridors = describeCorridorReadiness(IS_PRODUCTION_CHAIN)
+  const openCorridors = corridors.filter(c => c.open)
+  const liveCorridors = openCorridors.filter(c => c.live)
+
+  // A send can only be honoured end to end if every one of these holds.
+  const canAcceptTransfers =
+    database && relayer && encryption && phonePepper && notifications && openCorridors.length > 0
+
+  // On a production chain an open corridor must also be a LIVE one — a
+  // simulated rail cannot settle real money.
+  const canSettle = IS_PRODUCTION_CHAIN ? liveCorridors.length > 0 : openCorridors.length > 0
+
+  const healthy = canAcceptTransfers && canSettle
+
+  const body = {
+    status: healthy ? 'ok' : 'unavailable',
+    chainId: env.NEXT_PUBLIC_CHAIN_ID,
+    productionChain: IS_PRODUCTION_CHAIN,
+    services: {
+      database: database ? 'connected' : 'MISSING DATABASE_URL',
+      redis: redis ? 'connected' : 'missing UPSTASH_REDIS_REST_URL (rate limits are per-instance only)',
+      relayer: relayer ? 'configured' : 'MISSING RELAYER_PRIVATE_KEY',
+      secretsEncryption: encryption ? 'configured' : 'MISSING SECRETS_ENCRYPTION_KEY',
+      phonePepper: phonePepper ? 'configured' : 'MISSING PHONE_HASH_PEPPER',
+      notifications: notifications ? 'configured' : 'MISSING — recipients cannot receive claim codes',
+      cron: cron ? 'protected' : 'MISSING CRON_SECRET — scheduled jobs are unauthenticated',
+    },
+    corridors,
+    summary: {
+      corridorsOpen: openCorridors.length,
+      corridorsLive: liveCorridors.length,
+      corridorsTotal: corridors.length,
+      canAcceptTransfers,
+      canSettle,
+    },
+    timestamp: new Date().toISOString(),
+  }
+
+  return NextResponse.json(body, {
+    status: healthy ? 200 : 503,
+    headers: { 'Cache-Control': 'no-store' },
+  })
 }

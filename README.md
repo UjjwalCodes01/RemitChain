@@ -31,22 +31,34 @@ The most common question is: **How does the money reach the recipient's bank/mob
 
 Here is the simple step-by-step flow:
 
-1. **Locking the Funds (Sender)**
-   The sender locks stablecoins (QUSD) inside the `EscrowVault` smart contract on-chain. The contract doesn't store a wallet address for the recipient. Instead, it locks the funds cryptographically under:
-   * A hash of the recipient's phone number (`phoneHash`).
-   * A hash of a random 6-digit passcode/OTP (`otpHash`).
+1. **Preparing the transfer (server)**
+   The sender enters an amount, a phone number and a destination country. The
+   **server** mints a 6-digit OTP and a 256-bit claim secret, derives the
+   commitments, and locks an FX quote. None of this happens in the browser — the
+   OTP never touches the sender's device.
 
-2. **Notifying the Recipient**
-   The recipient gets a claim link (via SMS or email) containing the transaction ID and the 6-digit OTP code.
+2. **Locking the funds (sender)**
+   The sender's wallet locks QUSD in the `EscrowVault` contract. The contract
+   stores no recipient address. Instead the funds are locked under:
+   * a keyed hash of the recipient's phone number (`phoneHash`)
+   * a commitment to the claim secret and OTP (`otpCommitHash`)
 
-3. **Gasless Backend Claiming (The Relayer)**
-   The recipient opens the link, enters their phone number, and inputs the OTP. Since they don't have a wallet, private keys, or gas (QIE) to execute blockchain transactions, they submit the form to our **Relayer** (a secure backend server). The Relayer:
-   * Verifies the OTP and phone number match the on-chain lock.
-   * Signs the claim transaction and pays the network transaction fee (gas) on behalf of the recipient.
-   * Unlocks the QUSD from the smart contract.
+3. **Notifying the recipient (server)**
+   Once the transaction is confirmed on-chain, the server emails the recipient a
+   claim link and the 6-digit code. The claim secret rides in the URL *fragment*,
+   so it never reaches a server log or a Referer header.
 
-4. **Direct Bank Deposit (The Off-ramp)**
-   Once the Relayer unlocks the QUSD, it doesn't send crypto to the user. Instead, the Relayer immediately hands the QUSD to a local off-ramp payment provider (e.g., Razorpay/UPI in India, SPEI in Mexico, or GCash in the Philippines). The provider converts the stablecoins to local fiat currency and deposits it **directly into the recipient's bank account or mobile wallet** linked to their phone number.
+4. **Gasless claiming (the relayer)**
+   The recipient opens the link, enters their phone number, the code, and where
+   they want the money. They have no wallet, no keys and no gas, so the
+   **relayer** verifies both credentials against the on-chain commitments and
+   submits `claimRemittance`, paying the gas itself.
+
+5. **Payout (the ledger)**
+   Only **after** the on-chain claim is mined does a payout row get written and
+   handed to a payment provider. A background worker submits it, retries with
+   backoff, reconciles against provider webhooks, and escalates anything
+   ambiguous to human review. Fiat never leaves before the escrow releases.
 
 The recipient receives standard fiat currency directly in their bank account, without ever needing to touch crypto, create a wallet, or manage private keys!
 
@@ -93,13 +105,19 @@ All contracts are deployed on the **QIE Mainnet** and verified on the [QIE Explo
 
 RemitChain supports 5 major international corridors natively. Depending on the corridor selected by the sender, the recipient is prompted with the corresponding local bank or mobile wallet rail format:
 
-| Corridor Index | Country | Local Rail | Account Format | Validator Regex / Logic | API Provider |
+| Corridor | Country | Rail | Account format | Provider | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1 (ae-in)** | India | UPI | Virtual Payment Address (VPA) | `^[\w.-]+@[\w.-]+$` | Razorpay Payouts (Real API) |
-| **2 (us-mx)** | Mexico | SPEI | 18-digit CLABE code | `^\d{18}$` | SPEI Stub (Simulated Rail) |
-| **3 (gb-ng)** | Nigeria | OPay | 10-digit mobile number | `^\d{10}$` | OPay Stub (Simulated Rail) |
-| **4 (sa-pk)** | Pakistan | JazzCash | 11-digit mobile number | `^\d{11}$` | JazzCash Stub (Simulated Rail) |
-| **5 (sg-bd)** | Bangladesh | bKash | 11-digit wallet number | `^\d{11}$` | bKash Stub (Simulated Rail) |
+| `ae-in` | India | UPI | Virtual Payment Address | RazorpayX | **Live** |
+| `us-mx` | Mexico | SPEI | 18-digit CLABE | — | Closed |
+| `gb-ng` | Nigeria | OPay | 10-digit number | — | Closed |
+| `sa-pk` | Pakistan | JazzCash | 11-digit number | — | Closed |
+| `sg-bd` | Bangladesh | bKash | 11-digit number | — | Closed |
+
+A corridor is **Closed** until a payout provider is implemented and its
+credentials are configured. Closed corridors cannot be selected on the send page
+and are rejected by the API — they never report a payout that did not happen.
+See [`LAUNCH.md`](LAUNCH.md) for how to open one.
+
 
 ---
 
@@ -152,17 +170,18 @@ pnpm install
 ```
 
 **Environment Variables:**
-Create a `.env` file inside the `frontend` folder:
-```env
-NEXT_PUBLIC_CHAIN_ID=1990
-NEXT_PUBLIC_RPC_URL=https://rpc1mainnet.qie.digital/
-NEXT_PUBLIC_RELAYER_ADDRESS=0xYourRelayerAddress
-RELAYER_PRIVATE_KEY=0xYourRelayerPrivateKey
+```bash
+cd frontend
+cp .env.example .env
+```
 
-# API Keys (If using 'rzp_test_' keys, the app automatically runs in sandbox simulation mode)
-RESEND_API_KEY=re_...
-RAZORPAY_KEY_ID=rzp_test_...
-RAZORPAY_KEY_SECRET=...
+`.env.example` documents every value and marks which are required. On a
+production chain the app **refuses to start** without them, naming exactly what
+is missing — see `lib/env.server.ts`.
+
+**Run migrations before first start:**
+```bash
+pnpm db:migrate
 ```
 
 **Run the Development Server:**
@@ -173,9 +192,23 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 🔐 Security & Relayer Setup
-The architecture heavily relies on a backend relayer. **Never expose the `RELAYER_PRIVATE_KEY` on the client.** 
-When a recipient submits their OTP on the claim page, the Next.js API route takes the OTP, constructs the transaction, and the Relayer signs and pays the QIE gas fee to execute `claimRemittance()` on the blockchain.
+## 🔐 Security
+
+**The relayer is a custodian.** Because the recipient has no wallet, the relayer
+is the on-chain `recipient` and signs its own claim authorization. Whoever holds
+`RELAYER_PRIVATE_KEY` can release any claimable escrow to that address. Keep it
+in a KMS/HSM, fund it with gas only, and alert on claim-rate anomalies.
+
+**Claim credentials.** The value committed on-chain is
+`keccak256(claimSecret ‖ otp)` where `claimSecret` is 256 random bits delivered
+in the claim link. The 6-digit OTP alone is not enough to invert the commitment,
+and online guessing is bounded by an escalating per-transfer lockout.
+
+**Phone numbers** are committed with a server-side pepper and never stored in
+full — only the commitment and a masked form for support.
+
+Full analysis, including residual risks: [`contracts/THREAT_MODEL.md`](contracts/THREAT_MODEL.md).
+Going live: [`LAUNCH.md`](LAUNCH.md).
 
 ---
 

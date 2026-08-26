@@ -120,8 +120,10 @@ export async function GET(_req: NextRequest) {
       claimed:      sql<number>`count(*) filter (where ${transfers.status} = 1)::int`,
       pending:      sql<number>`count(*) filter (where ${transfers.status} = 0)::int`,
       cancelled:    sql<number>`count(*) filter (where ${transfers.status} = 2)::int`,
-      smsDelivered: sql<number>`count(*) filter (where ${transfers.smsStatus} = 'SENT')::int`,
-      offrampDone:  sql<number>`count(*) filter (where ${transfers.offrampStatus} = 'COMPLETED')::int`,
+      smsDelivered: sql<number>`count(*) filter (where ${transfers.notifyStatus} = 'SENT')::int`,
+      // Payouts moved out of `transfers` into their own ledger, so settlement
+      // is now counted from the source of truth rather than a mirrored column.
+      offrampDone:  sql<number>`(select count(*) from payouts where status = 'PAID')::int`,
       totalVolume:  sql<string>`coalesce(sum(${transfers.amount}::numeric), 0)::text`,
       uniqueSenders:sql<number>`count(distinct ${transfers.senderAddress})::int`,
     }).from(transfers),

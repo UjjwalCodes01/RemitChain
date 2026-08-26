@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useSearchParams } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'motion/react'
-import { CheckCircle2, Clock, Share2, Loader2, ArrowLeft, MessageSquare, Banknote, Copy, ExternalLink, FlaskConical } from 'lucide-react'
+import { CheckCircle2, Clock, Share2, Loader2, ArrowLeft, MessageSquare, Banknote, Copy, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
@@ -22,6 +22,20 @@ function stageIndex(id: StageId) {
   return STAGES.findIndex(s => s.id === id)
 }
 
+/** Plain-language payout state for the sender. */
+function payoutStatusLabel(status: string): string {
+  switch (status) {
+    case 'PAID': return 'Paid'
+    case 'PROCESSING':
+    case 'SUBMITTED': return 'On its way'
+    case 'CREATED': return 'Queued'
+    case 'FAILED': return 'Retrying'
+    case 'REVERSED': return 'Returned by the bank'
+    case 'MANUAL_REVIEW': return 'Needs review'
+    default: return status
+  }
+}
+
 export default function TransferTrackerPage() {
   const params = useParams()
   const txId = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? params.id[0] : ''
@@ -35,70 +49,40 @@ export default function TransferTrackerPage() {
   }, [])
   const publicClient = usePublicClient()
 
+  // Off-chain metadata + the fiat payout leg.
+  // Declared here, above the countdown effect, because that effect reads the
+  // expiry from it. It previously referenced `transfer` — a `const` declared
+  // 60 lines further down — which is a temporal-dead-zone error at runtime.
+  const { data: detail } = useTransferDetail(transferId, true)
+
   // ── Live expiry countdown ─────────────────────────────────────────────────
   const [expiryLabel, setExpiryLabel] = useState<string>('48h remaining')
   const [expiryUrgent, setExpiryUrgent] = useState(false)
+  /** Epoch ms. The API returns ms; the contract emits seconds. */
+  const expiryMs = detail?.expiry ?? 0
 
   useEffect(() => {
-    if (!transfer || currentStage === 'claimed') return
-    const expiryTs = Number(transfer.expiry) // UNIX seconds
-    if (!expiryTs) return
+    if (!expiryMs || currentStage === 'claimed') return
     const update = () => {
-      const nowSec = Math.floor(Date.now() / 1000)
-      const diffSec = expiryTs - nowSec
-      if (diffSec <= 0) {
+      const diffMs = expiryMs - Date.now()
+      if (diffMs <= 0) {
         setExpiryLabel('Expired')
         setExpiryUrgent(true)
         return
       }
-      const h = Math.floor(diffSec / 3600)
-      const m = Math.floor((diffSec % 3600) / 60)
-      const s = diffSec % 60
-      setExpiryUrgent(diffSec < 3600) // red when < 1 hour
-      if (h > 0) {
-        setExpiryLabel(`${h}h ${m}m remaining`)
-      } else if (m > 0) {
-        setExpiryLabel(`${m}m ${s}s remaining`)
-      } else {
-        setExpiryLabel(`${s}s remaining`)
-      }
+      const totalSec = Math.floor(diffMs / 1000)
+      const h = Math.floor(totalSec / 3600)
+      const m = Math.floor((totalSec % 3600) / 60)
+      const sec = totalSec % 60
+      setExpiryUrgent(diffMs < 3_600_000) // red under an hour
+      if (h > 0) setExpiryLabel(`${h}h ${m}m remaining`)
+      else if (m > 0) setExpiryLabel(`${m}m ${sec}s remaining`)
+      else setExpiryLabel(`${sec}s remaining`)
     }
     update()
     const id = setInterval(update, 1000)
     return () => clearInterval(id)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transfer, currentStage])
-
-  // Demo Mode — fetch plaintext OTP for on-screen display
-  const IS_DEMO = process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
-  const searchParams = useSearchParams()
-  const judgeToken = searchParams.get('judge')
-  const showDemo = IS_DEMO || !!judgeToken
-  const [demoOtp, setDemoOtp] = useState<string | null>(null)
-  const [demoCopied, setDemoCopied] = useState(false)
-
-  useEffect(() => {
-    if (!showDemo || !transferId || transferId.length !== 66) return
-    // Poll for the OTP (send page stores it async after TX confirm)
-    let attempts = 0
-    const maxAttempts = 10
-    const poll = async () => {
-      try {
-        const url = `/api/transfers/${transferId}/demo-otp${judgeToken ? `?judge=${encodeURIComponent(judgeToken)}` : ''}`
-        const res = await fetch(url)
-        if (res.ok) {
-          const data = await res.json()
-          if (data.otp) { setDemoOtp(data.otp); return }
-        }
-      } catch { /* ignore */ }
-      if (++attempts < maxAttempts) setTimeout(poll, 1500)
-    }
-    setTimeout(poll, 800) // first attempt after 800ms (TX store is fire-and-forget)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transferId, showDemo, judgeToken])
-
-  // Off-chain metadata: SMS status, off-ramp status, recipient nickname
-  const { data: detail } = useTransferDetail(transferId, true)
+  }, [expiryMs, currentStage])
 
   // Trigger a fresh event scan on mount (sub-minute freshness before Vercel cron fires)
   useEffect(() => {
@@ -345,20 +329,50 @@ export default function TransferTrackerPage() {
                 </Link>
               </div>
 
-              {/* Off-chain status strip */}
+              {/* Delivery + payout status */}
               {detail && (
-                <div className="px-4 py-3 flex gap-4 text-xs" style={{ background: 'var(--color-surface)', borderTop: '1px solid var(--color-border)' }}>
+                <div className="px-4 py-3 flex flex-col gap-2 text-xs" style={{ background: 'var(--color-surface)', borderTop: '1px solid var(--color-border)' }}>
                   <div className="flex items-center gap-1.5">
-                    <MessageSquare className="w-3.5 h-3.5" style={{ color: detail.smsStatus === 'SENT' ? 'var(--color-mint)' : 'var(--color-text-tertiary)' }} />
+                    <MessageSquare className="w-3.5 h-3.5" style={{ color: detail.notifyStatus === 'SENT' ? 'var(--color-mint)' : 'var(--color-text-tertiary)' }} />
                     <span style={{ color: 'var(--color-text-secondary)' }}>
-                      SMS: {detail.smsStatus === 'SENT' ? 'Delivered' : detail.smsStatus === 'FAILED' ? 'Not sent' : 'Pending'}
+                      Claim code: {detail.notifyStatus === 'SENT' ? 'Delivered' : detail.notifyStatus === 'FAILED' ? 'Not delivered' : 'Sending…'}
                     </span>
                   </div>
-                  {detail.offrampStatus !== 'NONE' && (
+
+                  {/* The fiat leg. Releasing the escrow is not the same as the
+                      recipient being paid, so it gets its own line and its own
+                      state rather than being collapsed into "Claimed". */}
+                  {detail.payout && (
                     <div className="flex items-center gap-1.5">
-                      <Banknote className="w-3.5 h-3.5" style={{ color: detail.offrampStatus === 'COMPLETED' ? 'var(--color-mint)' : 'var(--color-text-tertiary)' }} />
+                      <Banknote
+                        className="w-3.5 h-3.5"
+                        style={{ color: detail.payout.status === 'PAID' ? 'var(--color-mint)' : 'var(--color-text-tertiary)' }}
+                      />
                       <span style={{ color: 'var(--color-text-secondary)' }}>
-                        {detail.offrampMethod ?? 'Payout'}: {detail.offrampStatus === 'COMPLETED' ? 'Complete' : detail.offrampStatus === 'PENDING' ? 'Processing…' : detail.offrampStatus}
+                        {detail.payout.rail} payout to {detail.payout.destinationMasked}: {payoutStatusLabel(detail.payout.status)}
+                      </span>
+                    </div>
+                  )}
+
+                  {detail.payout?.utr && (
+                    <div className="flex items-center gap-1.5">
+                      <span style={{ color: 'var(--color-text-tertiary)' }}>Bank reference</span>
+                      <code className="font-mono" style={{ color: 'var(--color-text-secondary)' }}>{detail.payout.utr}</code>
+                    </div>
+                  )}
+
+                  {detail.payout && !detail.payout.live && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold" style={{ color: '#F5A623' }}>
+                        Test rail — no real money was sent.
+                      </span>
+                    </div>
+                  )}
+
+                  {detail.payout?.status === 'MANUAL_REVIEW' && (
+                    <div className="flex items-center gap-1.5">
+                      <span style={{ color: 'var(--color-coral)' }}>
+                        This payout needs a manual check. Our team has been alerted.
                       </span>
                     </div>
                   )}
@@ -390,72 +404,6 @@ export default function TransferTrackerPage() {
               {expiryLabel}
             </p>
           </div>
-        )}
-
-        {/* Demo Mode — OTP Card (visible only when showDemo=true) */}
-        {showDemo && currentStage !== 'claimed' && (
-          <AnimatePresence>
-            {demoOtp ? (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mt-6 rounded-2xl border overflow-hidden"
-                style={{ borderColor: 'rgba(245,166,35,0.4)', background: 'rgba(245,166,35,0.06)' }}
-              >
-                {/* Header */}
-                <div className="flex items-center gap-2 px-4 py-2 border-b" style={{ borderColor: 'rgba(245,166,35,0.2)' }}>
-                  <FlaskConical className="w-3.5 h-3.5" style={{ color: '#F5A623' }} />
-                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: '#F5A623' }}>Demo Mode</span>
-                  <span className="text-xs ml-auto" style={{ color: 'rgba(245,166,35,0.6)' }}>OTP shown for judge testing</span>
-                </div>
-
-                {/* OTP display */}
-                <div className="px-4 pt-4 pb-2 text-center">
-                  <p className="text-xs mb-2" style={{ color: 'var(--color-text-tertiary)' }}>Claim code for this transfer</p>
-                  <div className="text-5xl font-black font-mono tracking-[0.2em] mb-4" style={{ color: 'var(--color-text-primary)' }}>
-                    {demoOtp}
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex gap-2 px-4 pb-4">
-                  <button
-                    onClick={async () => {
-                      const claimUrl = `${window.location.origin}/claim/${txId}?otp=${demoOtp}${judgeToken ? `&judge=${encodeURIComponent(judgeToken)}` : ''}`
-                      try { await navigator.clipboard.writeText(claimUrl); setDemoCopied(true); setTimeout(() => setDemoCopied(false), 2000) }
-                      catch { window.prompt('Copy claim link:', claimUrl) }
-                    }}
-                    className="flex-1 h-10 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-                    style={{ background: 'rgba(245,166,35,0.15)', color: '#F5A623', border: '1px solid rgba(245,166,35,0.3)' }}
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    {demoCopied ? 'Copied!' : 'Copy claim link'}
-                  </button>
-                  <a
-                    href={`/claim/${txId}?otp=${demoOtp}${judgeToken ? `&judge=${encodeURIComponent(judgeToken)}` : ''}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 h-10 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-                    style={{ background: '#F5A623', color: '#000' }}
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    Open claim page
-                  </a>
-                </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="mt-6 p-3 rounded-xl flex items-center gap-2"
-                style={{ background: 'rgba(245,166,35,0.06)', border: '1px dashed rgba(245,166,35,0.3)' }}
-              >
-                <FlaskConical className="w-3.5 h-3.5 shrink-0" style={{ color: '#F5A623' }} />
-                <span className="text-xs" style={{ color: 'rgba(245,166,35,0.7)' }}>Demo Mode — waiting for OTP…</span>
-                <Loader2 className="w-3 h-3 animate-spin ml-auto shrink-0" style={{ color: 'rgba(245,166,35,0.5)' }} />
-              </motion.div>
-            )}
-          </AnimatePresence>
         )}
 
         {/* Spinner for non-claimed stages */}

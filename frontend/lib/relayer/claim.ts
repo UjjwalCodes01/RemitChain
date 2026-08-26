@@ -1,111 +1,111 @@
 /**
  * lib/relayer/claim.ts
  *
- * Shared broadcast helper for the relayer — extracted so it can be
- * unit-tested independently of the HTTP layer.
+ * Broadcasts `claimRemittance` on behalf of the recipient.
  *
- * SECURITY: This module is server-only. RELAYER_PRIVATE_KEY must never
- * appear in client bundles or log output.
+ * SERVER ONLY. The relayer key must never reach a client bundle or a log line.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ON THE TRUST MODEL
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `claimRemittance` takes a `recipient` address and an EIP-712 signature from
+ * that recipient. The contract's intent is a two-key model: even a compromised
+ * relayer cannot redirect funds, because it cannot forge the recipient's
+ * signature.
+ *
+ * In this product the recipient has no wallet — that is the entire premise —
+ * so the relayer IS the on-chain recipient, and it signs for itself. The
+ * two-key property therefore does NOT hold for this deployment: whoever holds
+ * the relayer key can release any claimable escrow to that address.
+ *
+ * This is stated plainly rather than papered over, because it determines where
+ * the real control has to sit:
+ *
+ *   - the relayer key belongs in a KMS/HSM, not an environment variable;
+ *   - the relayer address should hold only gas, never accumulate balance;
+ *   - releasing escrow does not pay anyone — the payout ledger does, and that
+ *     is where reconciliation and limits live.
+ *
+ * See contracts/THREAT_MODEL.md §3.3 R1/R2 for the full write-up.
  */
 
+import 'server-only'
 import {
   createPublicClient,
   createWalletClient,
   http,
-  toHex,
-  encodePacked,
-  encodeAbiParameters,
-  keccak256,
   type Chain,
+  type Hex,
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { REMITCHAIN_ADDRESS, RemitChainAbi } from '@/lib/contracts'
 
-// ── Constants ────────────────────────────────────────────────────────────────
-
-/** Must match BaseTest.sol and the send page */
-export const PHONE_SALT = toHex(BigInt('0xDEADBEEF'), { size: 32 }) as `0x${string}`
-
-// ── Types ────────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface ClaimParams {
-  transferId: `0x${string}`
-  otpReveal: `0x${string}`
-  relayerPrivateKey: `0x${string}`
-  relayerAddress: `0x${string}`
+  transferId: Hex
+  otpReveal: Hex
+  relayerPrivateKey: Hex
+  relayerAddress: Hex
   rpcUrl: string
   chain: Chain
 }
 
 export interface ClaimResult {
-  txHash: `0x${string}`
+  txHash: Hex
+  blockNumber: bigint
 }
 
 export interface TransferData {
-  sender: `0x${string}`
-  recipientPhoneHash: `0x${string}`
-  otpCommitHash: `0x${string}`
+  sender: Hex
+  recipientPhoneHash: Hex
+  otpCommitHash: Hex
   amount: bigint
   expiry: bigint
   corridor: number
   status: number
 }
 
-// ── Phone hash ───────────────────────────────────────────────────────────────
+/** On-chain `Status` enum. NONE is 0, so a missing transfer reads as NONE. */
+export const ChainStatus = {
+  NONE: 0,
+  PENDING: 1,
+  CLAIMED: 2,
+  CANCELLED: 3,
+} as const
+
+/** Signature validity window. Short, because we broadcast immediately. */
+const SIGNATURE_TTL_SECONDS = 300
+
+// ─── Broadcast ───────────────────────────────────────────────────────────────
 
 /**
- * Compute the phone hash the same way the send page and Solidity do:
- * keccak256(abi.encodePacked(SALT, phone))  (tight packing, no padding)
- */
-export function computePhoneHash(phone: string): `0x${string}` {
-  return keccak256(encodePacked(['bytes32', 'string'], [PHONE_SALT, phone]))
-}
-
-// ── OTP commit hash ──────────────────────────────────────────────────────────
-
-/**
- * Compute the OTP commit hash the same way the send page does:
- * keccak256(abi.encode(otpReveal, transferId, relayerAddress))
- */
-export function computeOtpCommitHash(
-  otpReveal: `0x${string}`,
-  transferId: `0x${string}`,
-  relayerAddress: `0x${string}`,
-): `0x${string}` {
-  return keccak256(
-    encodeAbiParameters(
-      [{ type: 'bytes32' }, { type: 'bytes32' }, { type: 'address' }],
-      [otpReveal, transferId, relayerAddress],
-    ),
-  )
-}
-
-// ── Broadcast ────────────────────────────────────────────────────────────────
-
-/**
- * Sign and broadcast claimRemittance() on behalf of the recipient.
- * Throws on contract revert or network error.
+ * Sign and broadcast `claimRemittance`, then wait for inclusion.
+ *
+ * Throws on revert or network failure. The caller must treat a throw as "the
+ * escrow did NOT release" and must not pay anyone.
  */
 export async function buildAndBroadcastClaim(params: ClaimParams): Promise<ClaimResult> {
   const { transferId, otpReveal, relayerPrivateKey, relayerAddress, rpcUrl, chain } = params
 
   const account = privateKeyToAccount(relayerPrivateKey)
+  if (account.address.toLowerCase() !== relayerAddress.toLowerCase()) {
+    throw new Error('Relayer private key does not match the configured relayer address')
+  }
 
   const publicClient = createPublicClient({ chain, transport: http(rpcUrl) })
   const walletClient = createWalletClient({ account, chain, transport: http(rpcUrl) })
 
-  // Fetch recipient nonce for EIP-712 replay protection
-  const nonce = await publicClient.readContract({
+  // Replay protection for the EIP-712 payload — increments on every claim.
+  const nonce = (await publicClient.readContract({
     address: REMITCHAIN_ADDRESS,
     abi: RemitChainAbi,
     functionName: 'recipientNonces',
     args: [relayerAddress],
-  })
+  })) as bigint
 
-  // 5-minute deadline
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 300)
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + SIGNATURE_TTL_SECONDS)
 
-  // EIP-712 signature authorising the relayer to claim on behalf of recipient
   const signature = await walletClient.signTypedData({
     domain: {
       name: 'RemitChain',
@@ -122,15 +122,10 @@ export async function buildAndBroadcastClaim(params: ClaimParams): Promise<Claim
       ],
     },
     primaryType: 'ClaimRemittance',
-    message: {
-      transferId,
-      recipient: relayerAddress,
-      deadline,
-      nonce,
-    },
+    message: { transferId, recipient: relayerAddress, deadline, nonce },
   })
 
-  // Simulate first to surface revert reasons early
+  // Simulate first so a revert surfaces as a typed error before we spend gas.
   const { request } = await publicClient.simulateContract({
     account,
     address: REMITCHAIN_ADDRESS,
@@ -141,8 +136,43 @@ export async function buildAndBroadcastClaim(params: ClaimParams): Promise<Claim
 
   const txHash = await walletClient.writeContract(request)
 
-  // Wait for inclusion — 1 confirmation is enough for demo
-  await publicClient.waitForTransactionReceipt({ hash: txHash, confirmations: 1 })
+  const receipt = await publicClient.waitForTransactionReceipt({
+    hash: txHash,
+    confirmations: 1,
+    timeout: 120_000,
+  })
 
-  return { txHash }
+  if (receipt.status !== 'success') {
+    throw new Error(`claimRemittance reverted in transaction ${txHash}`)
+  }
+
+  return { txHash, blockNumber: receipt.blockNumber }
+}
+
+// ─── Revert mapping ──────────────────────────────────────────────────────────
+
+/**
+ * Translate a contract revert into something a recipient can act on.
+ * Returns null when the error is not a recognised contract error.
+ */
+export function mapClaimRevert(message: string): { status: number; error: string } | null {
+  if (message.includes('InvalidOTPReveal')) {
+    return { status: 400, error: 'That code is not correct. Please check and try again.' }
+  }
+  if (message.includes('TransferExpired')) {
+    return { status: 410, error: 'This transfer has expired and has been returned to the sender.' }
+  }
+  if (message.includes('TransferNotPending')) {
+    return { status: 409, error: 'This transfer has already been claimed or cancelled.' }
+  }
+  if (message.includes('TransferNotFound')) {
+    return { status: 404, error: 'We could not find this transfer.' }
+  }
+  if (message.includes('SignatureExpired')) {
+    return { status: 503, error: 'The request timed out. Please try again.' }
+  }
+  if (message.includes('EnforcedPause')) {
+    return { status: 503, error: 'Claims are temporarily paused. Please try again shortly.' }
+  }
+  return null
 }
