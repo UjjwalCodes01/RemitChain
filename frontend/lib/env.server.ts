@@ -24,6 +24,23 @@ import { z } from 'zod'
 import { IS_PRODUCTION_CHAIN, env as publicEnv } from './env'
 import { assertPayoutConfigSafe } from './payouts/registry'
 
+/**
+ * An optional variable that may legitimately be blank.
+ *
+ * `FOO=` in a .env file, or an empty value in a hosting dashboard, arrives as
+ * the empty string — not as undefined — so `z.string().regex(...).optional()`
+ * rejects it and the whole schema fails. Leaving a variable blank is the normal
+ * way to say "not configured", and it must not be an error.
+ *
+ * Every optional variable goes through this so the behaviour is uniform.
+ */
+function blankable<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess(
+    v => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    schema.optional(),
+  )
+}
+
 const hex32 = z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Must be a 32-byte hex string with an 0x prefix')
 const base64_32 = z
   .string()
@@ -31,38 +48,38 @@ const base64_32 = z
 
 const serverSchema = z.object({
   // ── Relayer ───────────────────────────────────────────────────────────────
-  RELAYER_PRIVATE_KEY: hex32.optional(),
+  RELAYER_PRIVATE_KEY: blankable(hex32),
 
   // ── Data stores ───────────────────────────────────────────────────────────
-  DATABASE_URL: z.string().min(1).optional(),
-  UPSTASH_REDIS_REST_URL: z.string().url().optional().or(z.literal('').transform(() => undefined)),
-  UPSTASH_REDIS_REST_TOKEN: z.string().optional().or(z.literal('').transform(() => undefined)),
+  DATABASE_URL: blankable(z.string().min(1)),
+  UPSTASH_REDIS_REST_URL: blankable(z.string().url()),
+  UPSTASH_REDIS_REST_TOKEN: blankable(z.string()),
 
   // ── Secret material ───────────────────────────────────────────────────────
   /** Encrypts claim secrets and OTPs at rest. */
-  SECRETS_ENCRYPTION_KEY: base64_32.optional(),
+  SECRETS_ENCRYPTION_KEY: blankable(base64_32),
   /** Keys the on-chain phone commitment. Permanent — rotating it strands transfers. */
-  PHONE_HASH_PEPPER: hex32.optional(),
+  PHONE_HASH_PEPPER: blankable(hex32),
 
   // ── Scheduled jobs ────────────────────────────────────────────────────────
-  CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters').optional(),
+  CRON_SECRET: blankable(z.string().min(16, 'CRON_SECRET must be at least 16 characters')),
 
   /**
    * Operator credential for /api/ops/* — the manual payout review queue.
    * Kept separate from CRON_SECRET: that value is handed to Vercel's scheduler,
    * and a credential that can settle a payment should not be the same string.
    */
-  OPS_API_TOKEN: z.string().min(32, 'OPS_API_TOKEN must be at least 32 characters').optional(),
+  OPS_API_TOKEN: blankable(z.string().min(32, 'OPS_API_TOKEN must be at least 32 characters')),
 
   // ── Notification channels ─────────────────────────────────────────────────
   OTP_CHANNEL: z.enum(['email', 'sms']).default('email'),
-  RESEND_API_KEY: z.string().optional().or(z.literal('').transform(() => undefined)),
-  RESEND_FROM: z.string().optional().or(z.literal('').transform(() => undefined)),
-  GMAIL_USER: z.string().optional().or(z.literal('').transform(() => undefined)),
-  GMAIL_APP_PASSWORD: z.string().optional().or(z.literal('').transform(() => undefined)),
-  TWILIO_SID: z.string().optional(),
-  TWILIO_AUTH_TOKEN: z.string().optional(),
-  TWILIO_FROM: z.string().optional(),
+  RESEND_API_KEY: blankable(z.string()),
+  RESEND_FROM: blankable(z.string()),
+  GMAIL_USER: blankable(z.string()),
+  GMAIL_APP_PASSWORD: blankable(z.string()),
+  TWILIO_SID: blankable(z.string()),
+  TWILIO_AUTH_TOKEN: blankable(z.string()),
+  TWILIO_FROM: blankable(z.string()),
 
   // ── Compliance ────────────────────────────────────────────────────────────
   /**
@@ -70,26 +87,26 @@ const serverSchema = z.object({
    * none configured, `screenTransfer` blocks every send rather than letting
    * unscreened transfers through.
    */
-  SCREENING_PROVIDER: z.string().optional().or(z.literal('').transform(() => undefined)),
+  SCREENING_PROVIDER: blankable(z.string()),
   /** Identity verification provider for KYC tier grants. */
-  KYC_PROVIDER: z.string().optional().or(z.literal('').transform(() => undefined)),
+  KYC_PROVIDER: blankable(z.string()),
 
   // ── Payout providers ──────────────────────────────────────────────────────
-  RAZORPAY_KEY_ID: z.string().optional().or(z.literal('').transform(() => undefined)),
-  RAZORPAY_KEY_SECRET: z.string().optional().or(z.literal('').transform(() => undefined)),
-  RAZORPAY_ACCOUNT_NUMBER: z.string().optional().or(z.literal('').transform(() => undefined)),
-  RAZORPAY_WEBHOOK_SECRET: z.string().optional().or(z.literal('').transform(() => undefined)),
+  RAZORPAY_KEY_ID: blankable(z.string()),
+  RAZORPAY_KEY_SECRET: blankable(z.string()),
+  RAZORPAY_ACCOUNT_NUMBER: blankable(z.string()),
+  RAZORPAY_WEBHOOK_SECRET: blankable(z.string()),
 
   // ── Web Push ──────────────────────────────────────────────────────────────
-  VAPID_PRIVATE_KEY: z.string().optional(),
-  VAPID_SUBJECT: z.string().optional(),
+  VAPID_PRIVATE_KEY: blankable(z.string()),
+  VAPID_SUBJECT: blankable(z.string()),
 
   // ── Escape hatches (all default to the safe value) ────────────────────────
   /**
    * Accept the pre-upgrade low-entropy OTP scheme, until this ISO-8601 moment.
    * Kept as a raw string; lib/claim-secret.ts interprets and expires it.
    */
-  ALLOW_LEGACY_OTP_SCHEME: z.string().optional().or(z.literal('').transform(() => undefined)),
+  ALLOW_LEGACY_OTP_SCHEME: blankable(z.string()),
   /**
    * How old an FX rate may be and still back a binding quote, in minutes.
    * Beyond it the corridor closes rather than quoting on stale data.

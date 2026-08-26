@@ -55,8 +55,15 @@ const secrets: Secret[] = [
 console.log(`
 \x1b[1mRemitChain — generated secrets\x1b[0m
 
-Copy these into your deployment's environment. They are printed once and not
-saved anywhere.
+\x1b[41m\x1b[97m  DO NOT PASTE THIS OUTPUT ANYWHERE  \x1b[0m
+
+Not into a chat, a ticket, a commit, a screenshot or a terminal recording.
+Type or copy each value straight into your secret store. Anything below that is
+seen by a third party must be regenerated before you deploy with it — and the
+two PERMANENT values cannot be rotated after launch without breaking pending
+transfers, so a leak found later is not recoverable.
+
+Printed once. Nothing is written to disk.
 `)
 
 for (const s of secrets) {
@@ -68,7 +75,9 @@ for (const s of secrets) {
   console.log(`  \x1b[36m${s.name}=${s.value}\x1b[0m\n`)
 }
 
-console.log(`\x1b[31m\x1b[1mThe two PERMANENT values must be backed up somewhere other than Vercel.\x1b[0m
+console.log(`\x1b[41m\x1b[97m  If any value above has been seen by anyone else, re-run this now.  \x1b[0m
+
+\x1b[31m\x1b[1mThe two PERMANENT values must be backed up somewhere other than Vercel.\x1b[0m
 
   SECRETS_ENCRYPTION_KEY  — losing it makes every stored claim secret
                             undecryptable, so pending transfers cannot have

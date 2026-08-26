@@ -18,6 +18,18 @@
 
 import { z } from 'zod'
 
+/**
+ * An optional variable that may legitimately be blank. `FOO=` arrives as the
+ * empty string, not undefined, so a bare `.optional()` would reject it —
+ * leaving a variable blank is the normal way to say "not configured".
+ */
+function blankable<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess(
+    v => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    schema.optional(),
+  )
+}
+
 const publicSchema = z.object({
   NEXT_PUBLIC_CHAIN_ID: z
     .string()
@@ -32,28 +44,22 @@ const publicSchema = z.object({
    * fails. Every read, send and claim goes through the chain RPC, so a single
    * endpoint is a single point of failure for the whole product.
    */
-  NEXT_PUBLIC_RPC_URLS: z.string().optional().or(z.literal('').transform(() => undefined)),
+  NEXT_PUBLIC_RPC_URLS: blankable(z.string()),
 
-  NEXT_PUBLIC_WC_PROJECT_ID: z.string().optional(),
+  NEXT_PUBLIC_WC_PROJECT_ID: blankable(z.string()),
 
   /**
    * The address the relayer signs with. Public by nature — it is the on-chain
    * `recipient` for every claim, and the send page needs it to compute the
    * commitment. The matching private key is server-side only.
    */
-  NEXT_PUBLIC_RELAYER_ADDRESS: z
-    .string()
-    .regex(/^0x[a-fA-F0-9]{40}$/, 'Must be a valid EVM address')
-    .optional()
-    .or(z.literal('').transform(() => undefined)),
+  NEXT_PUBLIC_RELAYER_ADDRESS: blankable(
+    z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Must be a valid EVM address'),
+  ),
 
-  NEXT_PUBLIC_APP_URL: z
-    .string()
-    .url()
-    .optional()
-    .or(z.literal('').transform(() => undefined)),
+  NEXT_PUBLIC_APP_URL: blankable(z.string().url()),
 
-  NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().optional(),
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: blankable(z.string()),
 })
 
 function parsePublicEnv() {
