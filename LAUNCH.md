@@ -22,6 +22,9 @@ You do not have to remember these. The system refuses to run without them.
 | MockQUSD on mainnet | `script/Deploy.s.sol` | Deployment reverts |
 | Multisig that is an EOA on mainnet | `script/Deploy.s.sol` | Deployment reverts |
 | Unverified wallet sending | `KYCRegistry.checkAndConsume` | Transaction reverts with `KYCRequired` |
+| Unscreened transfer | `lib/compliance/screening.ts` | Send refused with 403 when no screening provider is set |
+| Open-ended legacy OTP window | `lib/env.server.ts` | App throws at boot — the flag must carry an expiry ≤72h |
+| Stale deployment block | `pnpm sync:abis` | Generated from the deployment file; no hand-editing |
 | Type errors | `next.config.ts` | Build fails |
 
 ---
@@ -79,10 +82,12 @@ cd frontend
 pnpm sync:abis          # updates lib/contracts.ts from contracts/deployments/
 ```
 
-Verify the mainnet block in `lib/contracts.ts` matches
-`contracts/deployments/qie_mainnet.json`, and update `DEPLOYMENT_BLOCKS` in
-`lib/events/listener.ts` to the new deployment block — otherwise the event
-listener replays from the old contract's history.
+`sync:abis` now writes the addresses **and** the deployment block, taken from
+`deployedAtBlock` in the deployment file, so the event listener's start height
+is no longer a hand-maintained table. Commit the regenerated `lib/contracts.ts`.
+
+It also refuses to describe the mainnet token as real if it recognises a test
+token, and prints a warning instead.
 
 ---
 
@@ -133,14 +138,40 @@ technical controls; the licensing is yours to obtain.
       has a **zero** daily limit — so no unverified wallet can send at all.
       Wire your provider's signed decision into `verifyProviderDecision` in
       `app/api/kyc/upgrade/route.ts`.
-- [ ] **Sanctions / PEP screening** on both sender and recipient. There is no
-      hook for this yet — add it in `/api/transfers/prepare`, before the FX quote.
+- [ ] **Sanctions / PEP screening.** The hook now exists and runs on both
+      parties in `/api/transfers/prepare`, before the quote and before any claim
+      credential is minted. Every decision is written to `screening_records`
+      with a timestamp, provider and match detail, because a regulator asking
+      "why did this go through" needs an answer.
+
+      `SCREENING_PROVIDER` is **required on a production chain** — with none
+      configured, every send is refused rather than going through unscreened.
+
+      What you still need: a real sanctions data source. The bundled `denylist`
+      provider enforces your own blocks (court orders, chargeback bans) but only
+      knows what you put in it — it reports `isLive: false` and `/api/health`
+      says "not a live sanctions source". Wiring a vendor means implementing one
+      `ScreeningProvider` in `lib/compliance/screening.ts`.
 - [ ] **Transaction monitoring and SAR filing** process.
 - [ ] **Data retention and erasure policy.** The system already minimises what
       it stores: full phone numbers are never persisted (only a peppered
       commitment and a masked form), and claim secrets are wiped on settlement.
-- [ ] **Customer support path.** Payouts in `MANUAL_REVIEW` need a human. Decide
-      who watches that queue before you have one.
+- [ ] **Customer support path.** Payouts in `MANUAL_REVIEW` need a human, and
+      there is now somewhere for them to work:
+
+      ```bash
+      curl -H "Authorization: Bearer $OPS_API_TOKEN" https://your-domain.com/api/ops/payouts
+      ```
+
+      `GET` lists everything needing attention with enough context to contact
+      the right person (masked destination, masked phone, claim tx). `POST`
+      resolves one — `retry`, `mark_paid` with a bank reference, or
+      `mark_reversed` — and records who did it and why.
+
+      A retry is refused when the payout already has a provider reference, since
+      the provider may have accepted it and a blind retry risks paying twice.
+
+      Still yours to decide: **who** watches it, and how often.
 
 ---
 
@@ -152,17 +183,18 @@ technical controls; the licensing is yours to obtain.
       limit.
 - [ ] **Email** configured (Resend preferred) and the sending domain verified.
       A claim code in a spam folder is a transfer that never completes.
-- [ ] Generate the two permanent secrets and **back them up**:
+- [ ] Generate the secrets and **back up the two permanent ones**:
       ```bash
-      # SECRETS_ENCRYPTION_KEY
-      node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-      # PHONE_HASH_PEPPER
-      node -e "console.log('0x'+require('crypto').randomBytes(32).toString('hex'))"
-      # CRON_SECRET
-      node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      cd frontend && pnpm gen:secrets
       ```
-      Losing `PHONE_HASH_PEPPER` strands every in-flight transfer. Treat both
-      like a database encryption key.
+      Prints `SECRETS_ENCRYPTION_KEY`, `PHONE_HASH_PEPPER`, `CRON_SECRET` and
+      `OPS_API_TOKEN` in the exact formats each is validated against, labelled
+      permanent or rotatable. Nothing is written to disk.
+
+      Losing or rotating `PHONE_HASH_PEPPER` means no recipient's phone number
+      will ever match its on-chain commitment again: every pending transfer
+      becomes unclaimable and can only be refunded by its sender after expiry.
+      Store both permanent values somewhere other than Vercel.
 - [ ] `NEXT_PUBLIC_APP_URL` set to the real origin
 - [ ] Vercel plan supports the cron cadence in `vercel.json` — `/api/cron/payouts`
       runs every 2 minutes and is the reliability guarantee behind every payout.
@@ -198,30 +230,39 @@ Migration `0001_production_hardening` is idempotent and safe to re-run. It:
 The OTP and phone-hash schemes both changed. Transfers created before the
 upgrade were committed under the old scheme and cannot verify under the new one.
 
-1. Deploy with `ALLOW_LEGACY_OTP_SCHEME=true`. Both schemes are accepted, so
-   in-flight transfers stay claimable. The app logs a warning on every boot.
-2. Wait **48 hours** — the full claim window. Every pre-upgrade transfer has
-   either been claimed or expired by then.
-3. Redeploy with the flag removed.
+1. Deploy with an ISO-8601 deadline 48 hours out:
 
-Confirm step 3 actually happened. While it is set, the old brute-forceable
-commitment is still accepted for any transfer that presents one.
+   ```
+   ALLOW_LEGACY_OTP_SCHEME=2026-08-28T12:00:00Z
+   ```
+
+   Both schemes are accepted until that moment, so in-flight transfers stay
+   claimable.
+
+2. The window **closes by itself**. No redeploy is needed for the weak scheme to
+   stop being accepted, and `pnpm preflight` reports how long is left.
+
+3. Remove the variable at your convenience afterwards.
+
+`ALLOW_LEGACY_OTP_SCHEME=true` is refused at boot on a production chain, as is
+any deadline more than 72 hours out. Forgetting to remove a flag is the normal
+failure mode here, so the expiry is enforced in code rather than left to the
+runbook.
 
 ---
 
 ## 7. Pre-flight verification
 
 ```bash
-curl -s https://<your-domain>/api/health | jq
+PREFLIGHT_URL=https://your-domain.com pnpm preflight
 ```
 
-Expect `"status": "ok"` and HTTP 200. Anything else returns **503** and names
-what is wrong. Check specifically:
+Read-only. It checks health, corridor readiness, relayer gas, that the cron and
+ops endpoints reject unauthenticated calls, that the retired endpoints are gone,
+and how long the legacy OTP window has left — then prints **GO** or **NO-GO**
+with the blocking reasons, and exits non-zero on NO-GO so CI can gate on it.
 
-- `services.*` — every entry configured, none reading `MISSING`
-- `summary.corridorsLive` — at least 1
-- `corridors[].live` — `true` for every corridor you intend to open. A corridor
-  showing `live: false` is a simulated rail.
+`curl -s https://your-domain.com/api/health | jq` still gives the raw detail.
 
 Then run one real transfer end to end, with your own money, at the minimum
 amount:

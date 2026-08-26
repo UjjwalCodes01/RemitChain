@@ -165,7 +165,15 @@ contract Deploy is Script {
             ",\n",
             '  "deployer": "',
             vm.toString(deployer),
-            '",\n'
+            '",\n',
+            // The block the contracts went live at. scripts/sync-abis.ts reads
+            // this into the event listener's start height, so nobody has to
+            // remember to hand-edit DEPLOYMENT_BLOCKS after a redeploy — an
+            // omission that would make the listener replay the previous
+            // contract's entire history.
+            '  "deployedAtBlock": ',
+            vm.toString(block.number),
+            ',\n'
         );
         string memory part2 = string.concat(
             '  "contracts": {\n',

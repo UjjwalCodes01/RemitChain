@@ -47,6 +47,13 @@ const serverSchema = z.object({
   // ── Scheduled jobs ────────────────────────────────────────────────────────
   CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters').optional(),
 
+  /**
+   * Operator credential for /api/ops/* — the manual payout review queue.
+   * Kept separate from CRON_SECRET: that value is handed to Vercel's scheduler,
+   * and a credential that can settle a payment should not be the same string.
+   */
+  OPS_API_TOKEN: z.string().min(32, 'OPS_API_TOKEN must be at least 32 characters').optional(),
+
   // ── Notification channels ─────────────────────────────────────────────────
   OTP_CHANNEL: z.enum(['email', 'sms']).default('email'),
   RESEND_API_KEY: z.string().optional().or(z.literal('').transform(() => undefined)),
@@ -56,6 +63,16 @@ const serverSchema = z.object({
   TWILIO_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_FROM: z.string().optional(),
+
+  // ── Compliance ────────────────────────────────────────────────────────────
+  /**
+   * Sanctions / PEP screening provider. Required on a production chain — with
+   * none configured, `screenTransfer` blocks every send rather than letting
+   * unscreened transfers through.
+   */
+  SCREENING_PROVIDER: z.string().optional().or(z.literal('').transform(() => undefined)),
+  /** Identity verification provider for KYC tier grants. */
+  KYC_PROVIDER: z.string().optional().or(z.literal('').transform(() => undefined)),
 
   // ── Payout providers ──────────────────────────────────────────────────────
   RAZORPAY_KEY_ID: z.string().optional().or(z.literal('').transform(() => undefined)),
@@ -68,8 +85,11 @@ const serverSchema = z.object({
   VAPID_SUBJECT: z.string().optional(),
 
   // ── Escape hatches (all default to the safe value) ────────────────────────
-  /** Accept the pre-upgrade low-entropy OTP scheme for in-flight transfers. */
-  ALLOW_LEGACY_OTP_SCHEME: z.string().optional().transform(v => v === 'true').default('false'),
+  /**
+   * Accept the pre-upgrade low-entropy OTP scheme, until this ISO-8601 moment.
+   * Kept as a raw string; lib/claim-secret.ts interprets and expires it.
+   */
+  ALLOW_LEGACY_OTP_SCHEME: z.string().optional().or(z.literal('').transform(() => undefined)),
   /**
    * How old an FX rate may be and still back a binding quote, in minutes.
    * Beyond it the corridor closes rather than quoting on stale data.
@@ -89,6 +109,8 @@ const REQUIRED_ON_PRODUCTION: Array<{ key: keyof ServerEnv; why: string }> = [
   { key: 'PHONE_HASH_PEPPER', why: 'keys the phone commitment; a public salt leaks recipients' },
   { key: 'CRON_SECRET', why: 'authenticates the payout worker and event poller' },
   { key: 'UPSTASH_REDIS_REST_URL', why: 'backs distributed rate limiting' },
+  { key: 'SCREENING_PROVIDER', why: 'sanctions screening; unset means every send is blocked' },
+  { key: 'OPS_API_TOKEN', why: 'without it the manual payout review queue is unreachable' },
 ]
 
 function validateServerEnv(): ServerEnv {
@@ -130,13 +152,39 @@ function validateServerEnv(): ServerEnv {
     }
 
     if (data.ALLOW_LEGACY_OTP_SCHEME) {
-      // Deliberately a warning, not a failure: the flag exists precisely so the
-      // production cutover does not strand transfers that are already in
-      // flight. It has to be turned off again once they expire.
+      // An open-ended legacy window is the failure mode this guard exists for:
+      // the flag gets set for a cutover and then nobody removes it, leaving the
+      // brute-forceable commitment accepted indefinitely. Require a deadline.
+      if (data.ALLOW_LEGACY_OTP_SCHEME === 'true') {
+        throw new Error(
+          'FATAL: ALLOW_LEGACY_OTP_SCHEME=true is not permitted on a production chain.\n' +
+          'Set it to an ISO-8601 timestamp instead, so the legacy window closes by itself:\n' +
+          `  ALLOW_LEGACY_OTP_SCHEME=${new Date(Date.now() + 48 * 3600 * 1000).toISOString()}\n` +
+          'The pre-upgrade OTP commitment is brute-forceable from public chain data, so this ' +
+          'window must be bounded.',
+        )
+      }
+
+      const expiry = Date.parse(data.ALLOW_LEGACY_OTP_SCHEME)
+      if (Number.isNaN(expiry)) {
+        throw new Error(
+          `FATAL: ALLOW_LEGACY_OTP_SCHEME is "${data.ALLOW_LEGACY_OTP_SCHEME}", which is not a ` +
+          'valid ISO-8601 timestamp.',
+        )
+      }
+
+      const hoursLeft = Math.round((expiry - Date.now()) / 3_600_000)
+      if (hoursLeft > 72) {
+        throw new Error(
+          `FATAL: ALLOW_LEGACY_OTP_SCHEME expires in ${hoursLeft}h. The claim window is 48h, ` +
+          'so anything beyond 72h keeps a known-weak commitment accepted for no reason.',
+        )
+      }
+
       console.warn(
-        '[env] ALLOW_LEGACY_OTP_SCHEME is enabled on a production chain. The pre-upgrade ' +
-        'OTP commitment is brute-forceable from public chain data. Unset this flag once ' +
-        'every transfer created before the upgrade has expired (48h).',
+        hoursLeft > 0
+          ? `[env] Legacy OTP scheme accepted for another ${hoursLeft}h, then automatically refused.`
+          : '[env] ALLOW_LEGACY_OTP_SCHEME has expired and is no longer in effect. Remove it.',
       )
     }
 

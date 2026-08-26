@@ -40,6 +40,12 @@ deployment-ordered checklist.
 
 ### Required — the app will not boot without these on mainnet
 
+Generate the four locally-generated ones in one step:
+
+```bash
+cd frontend && pnpm gen:secrets
+```
+
 | Variable | Value / how to get it |
 |---|---|
 | `NEXT_PUBLIC_CHAIN_ID` | `1990` |
@@ -50,9 +56,11 @@ deployment-ordered checklist.
 | `DATABASE_URL` | Neon pooled connection string, with `?sslmode=require` |
 | `UPSTASH_REDIS_REST_URL` | From the Upstash console |
 | `UPSTASH_REDIS_REST_TOKEN` | From the Upstash console. **Sensitive.** |
-| `SECRETS_ENCRYPTION_KEY` | `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` **Sensitive. Back it up.** |
-| `PHONE_HASH_PEPPER` | `node -e "console.log('0x'+require('crypto').randomBytes(32).toString('hex'))"` **Sensitive. Back it up.** |
-| `CRON_SECRET` | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` **Sensitive.** |
+| `SECRETS_ENCRYPTION_KEY` | from `pnpm gen:secrets`. **Sensitive. Back it up outside Vercel.** |
+| `PHONE_HASH_PEPPER` | from `pnpm gen:secrets`. **Sensitive. Back it up outside Vercel.** |
+| `CRON_SECRET` | from `pnpm gen:secrets`. **Sensitive.** |
+| `OPS_API_TOKEN` | from `pnpm gen:secrets`. Guards the manual payout review queue, which can settle a payment. **Sensitive.** |
+| `SCREENING_PROVIDER` | `denylist`, or your vendor's id. Without it **every send is refused** — see LAUNCH.md §3. |
 
 `SECRETS_ENCRYPTION_KEY` and `PHONE_HASH_PEPPER` are **permanent**. Rotating
 either one strands every in-flight transfer — the phone commitment stops
@@ -90,6 +98,7 @@ never completes, and the funds sit until they expire.
 |---|---|---|
 | `OTP_CHANNEL` | `email` | `email` or `sms` |
 | `FX_MAX_STALENESS_MINUTES` | `60` | How old a rate may be and still back a quote. Beyond it, corridors close rather than quote on stale data. |
+| `ALLOW_LEGACY_OTP_SCHEME` | *(unset)* | Cutover only. Takes an ISO-8601 deadline ≤72h out and expires by itself; `true` is refused at boot. See LAUNCH.md §6. |
 | `STATS_BENCHMARK_FEE_PCT` | `0.062` | Baseline for the "fees saved" figure on `/stats`. Default is the World Bank global average. |
 | `KYC_PROVIDER` | *(unset)* | Until set, `/api/kyc/upgrade` refuses to raise anyone's tier on mainnet. |
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | | Web Push. `npx web-push generate-vapid-keys` |
@@ -97,10 +106,12 @@ never completes, and the funds sit until they expire.
 
 ### Do not set on production
 
-`ALLOW_LEGACY_OTP_SCHEME` is the sole exception — see the cutover step below.
 `ENABLE_SANDBOX_PAYOUTS` and `SKIP_ENV_VALIDATION` must never be set on
 Production. The first is refused at boot; the second would let a misconfigured
 deployment build successfully.
+
+`ALLOW_LEGACY_OTP_SCHEME` is the one exception, and only during the cutover —
+see LAUNCH.md §6. It must carry an ISO-8601 deadline; `true` is refused at boot.
 
 ---
 
@@ -233,7 +244,17 @@ Everything is structured JSON. Page on:
 
 **Watch balances.** The relayer's gas and the RazorpayX virtual account are the
 two things that stop the product dead when they run out, and neither is visible
-from the app.
+from the app. `pnpm preflight` reports the relayer balance and warns below
+0.5 QIE.
+
+**Watch the review queue.**
+
+```bash
+curl -H "Authorization: Bearer $OPS_API_TOKEN" https://your-domain.com/api/ops/payouts
+```
+
+A payout in `MANUAL_REVIEW` is a recipient who has not been paid. Nothing moves
+it along automatically — that is the point of the state.
 
 **Deployment Protection.** If you enable password protection or Vercel
 Authentication on Production, exempt `/api/webhooks/*` and `/api/cron/*` — a

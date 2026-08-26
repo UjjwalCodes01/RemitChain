@@ -29,6 +29,7 @@ import {
   text,
   integer,
   bigint,
+  boolean,
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core'
@@ -297,6 +298,58 @@ export const analyticsEvents = pgTable(
   ],
 )
 
+// ── screening_records ────────────────────────────────────────────────────────
+// Every sanctions/PEP screening decision, kept for audit. A regulator asking
+// "why did this transfer go through" needs an answer with a timestamp and a
+// provider; deciding in memory and forgetting is the same as not screening.
+//
+// Subjects are stored as keyed hashes, never plaintext.
+
+export const screeningRecords = pgTable(
+  'screening_records',
+  {
+    id: text('id').primaryKey().default(sql`gen_random_uuid()`),
+    transferId: text('transfer_id'),
+    subjectType: text('subject_type').notNull(),   // sender | recipient
+    subjectHash: text('subject_hash').notNull(),   // HMAC of address or phone
+    subjectMasked: text('subject_masked'),
+    decision: text('decision').notNull(),          // ALLOW | REVIEW | BLOCK
+    provider: text('provider').notNull(),
+    matchDetail: text('match_detail'),             // JSON, no raw PII
+    corridor: text('corridor'),
+    amount: text('amount'),
+    createdAt: epochMs('created_at').notNull().default(sql`(extract(epoch from now()) * 1000)::bigint`),
+  },
+  (t) => [
+    index('idx_screening_transfer').on(t.transferId),
+    index('idx_screening_subject').on(t.subjectHash),
+    index('idx_screening_decision').on(t.decision),
+    index('idx_screening_created').on(t.createdAt),
+  ],
+)
+
+// ── screening_denylist ───────────────────────────────────────────────────────
+// Operator-maintained blocks. Matched by keyed hash, so adding someone does not
+// require storing who they are.
+
+export const screeningDenylist = pgTable(
+  'screening_denylist',
+  {
+    id: text('id').primaryKey().default(sql`gen_random_uuid()`),
+    kind: text('kind').notNull(),                  // address | phone
+    valueHash: text('value_hash').notNull(),
+    valueMasked: text('value_masked'),
+    reason: text('reason').notNull(),
+    addedBy: text('added_by'),
+    active: boolean('active').notNull().default(true),
+    createdAt: epochMs('created_at').notNull().default(sql`(extract(epoch from now()) * 1000)::bigint`),
+  },
+  (t) => [
+    uniqueIndex('idx_denylist_value').on(t.kind, t.valueHash),
+    index('idx_denylist_active').on(t.active),
+  ],
+)
+
 // ── Type exports ─────────────────────────────────────────────────────────────
 
 export type Transfer = typeof transfers.$inferSelect
@@ -310,3 +363,5 @@ export type Schedule = typeof schedules.$inferSelect
 export type NewSchedule = typeof schedules.$inferInsert
 export type EventCursor = typeof eventCursor.$inferSelect
 export type AnalyticsEvent = typeof analyticsEvents.$inferSelect
+export type ScreeningRecord = typeof screeningRecords.$inferSelect
+export type DenylistEntry = typeof screeningDenylist.$inferSelect

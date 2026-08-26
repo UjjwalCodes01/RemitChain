@@ -42,6 +42,7 @@ import { db, transfers } from '@/lib/db'
 import { getRedis } from '@/lib/db/redis'
 import { rateLimit } from '@/lib/ratelimit'
 import { clientIp, log } from '@/lib/http'
+import { screenTransfer } from '@/lib/compliance/screening'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -140,6 +141,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "The recipient's email address is required to deliver their claim code." },
       { status: 400 },
+    )
+  }
+
+  // ── Sanctions / PEP screening ─────────────────────────────────────────────
+  // Before the quote and before any credential is minted, so a blocked transfer
+  // never reaches the chain and never produces a claim code. Fails closed: on a
+  // production chain with no provider configured this returns BLOCK.
+  const screening = await screenTransfer(
+    [
+      { type: 'sender', value: sender, masked: `${sender.slice(0, 6)}…${sender.slice(-4)}` },
+      { type: 'recipient', value: phoneResult.e164, masked: maskPhone(phoneResult.e164) },
+    ],
+    { corridor: corridor.id, amount: amount.toString() },
+  )
+
+  if (screening.decision !== 'ALLOW') {
+    return NextResponse.json(
+      { error: screening.reason, code: `SCREENING_${screening.decision}` },
+      { status: 403 },
     )
   }
 

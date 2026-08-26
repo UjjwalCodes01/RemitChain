@@ -26,7 +26,7 @@ import {
 import { eq, sql } from 'drizzle-orm'
 import { db, eventCursor, transfers } from '@/lib/db'
 import { getCorridorByIndex } from '@/lib/corridors'
-import { REMITCHAIN_ADDRESS } from '@/lib/contracts'
+import { REMITCHAIN_ADDRESS, DEPLOYMENT_BLOCKS } from '@/lib/contracts'
 
 // ── Chain definition (server-only) ────────────────────────────────────────────
 
@@ -54,10 +54,9 @@ const MAX_BLOCKS_PER_CHUNK = 2000n
 const MAX_CHUNKS_PER_RUN = 50   // Safety cap: ~100k blocks max per cron run
 const CONFIRMATIONS = 3n        // Process events only after 3 confirmations
 
-const DEPLOYMENT_BLOCKS: Record<number, bigint> = {
-  1983: 6444615n, // QIE Testnet
-  1990: 8537358n, // QIE Mainnet
-}
+// Generated from the deployment files by `pnpm sync:abis` — see lib/contracts.ts.
+// Previously a hand-maintained table here, which meant a redeploy nobody
+// followed up on left the listener replaying the old contract's history.
 
 // ── Event ABI fragments ───────────────────────────────────────────────────────
 

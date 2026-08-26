@@ -58,6 +58,8 @@ interface DeploymentConfig {
 interface DeploymentFile {
   contracts: DeployedContracts
   config: DeploymentConfig
+  /** Block the contracts went live at. Absent in pre-2026-08 deployment files. */
+  deployedAtBlock?: number
 }
 
 function readAbi(contractDir: string, contractName: string): unknown[] {
@@ -160,6 +162,7 @@ function main(): void {
     timelockAddress: string
     qusd: string
     feeTreasury: string
+    deployedAtBlock: number
     deployed: boolean
   }
 
@@ -171,6 +174,7 @@ function main(): void {
       timelockAddress: '0x0000000000000000000000000000000000000000',
       qusd:            '0x0000000000000000000000000000000000000000',
       feeTreasury:     '0x0000000000000000000000000000000000000000',
+      deployedAtBlock: 0,
       deployed: false,
     },
     1983: {
@@ -180,6 +184,7 @@ function main(): void {
       timelockAddress: '0x0000000000000000000000000000000000000000',
       qusd:            '0x56AD1E16394Ae6F8B3204b07e988f9d37497e58f',
       feeTreasury:     '0x3660362BeB3A95CE16D981e7D30E1e025E741393',
+      deployedAtBlock: 6444615,
       deployed: false,
     },
     1990: {
@@ -189,6 +194,7 @@ function main(): void {
       timelockAddress: '0x0000000000000000000000000000000000000000',
       qusd:            MAINNET_QUSD_PLACEHOLDER,
       feeTreasury:     '0x3660362BeB3A95CE16D981e7D30E1e025E741393',
+      deployedAtBlock: 8537358,
       deployed: false,
     },
   }
@@ -213,6 +219,9 @@ function main(): void {
       timelockAddress: dep.contracts.TimelockController,
       qusd:            dep.config.qusd,
       feeTreasury:     dep.config.feeTreasury,
+      // Fall back to whatever was already known if the deployment file predates
+      // the `deployedAtBlock` field.
+      deployedAtBlock: dep.deployedAtBlock ?? networkData[network.chainId]?.deployedAtBlock ?? 0,
       deployed: true,
     }
 
@@ -321,6 +330,24 @@ export const QUSD_DECIMALS = 6 as const
 
 /** Whether the app is targeting a production mainnet */
 export const IS_MAINNET = _chainId === 1990
+
+/**
+ * Block each deployment went live at — where the event listener starts from.
+ *
+ * Written from the deployedAtBlock field in the contracts/deployments files.
+ * This used to be a hand-maintained table in lib/events/listener.ts, so a
+ * redeploy that nobody remembered to follow up on left the listener scanning
+ * the previous contract's history from its old start height.
+ *
+ * The value is the block the deploy script simulated against, which is at or
+ * just before the block the contracts actually landed in. Starting a block or
+ * two early costs one wasted scan; starting late silently loses events.
+ */
+export const DEPLOYMENT_BLOCKS: Record<number, bigint> = {
+  31337: ${networkData[31337].deployedAtBlock}n,
+  1983: ${networkData[1983].deployedAtBlock}n,
+  1990: ${networkData[1990].deployedAtBlock}n,
+}
 `
 
   fs.writeFileSync(CONTRACTS_FILE, contractsContent, 'utf-8')

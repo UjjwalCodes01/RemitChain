@@ -140,7 +140,37 @@ export function legacyOtpReveal(otp: string): Hex {
   return toHex(BigInt(otp), { size: 32 })
 }
 
-/** Whether the legacy low-entropy scheme may still be accepted on claim. */
+/**
+ * Whether the legacy low-entropy scheme may still be accepted on claim.
+ *
+ * ALLOW_LEGACY_OTP_SCHEME takes an ISO-8601 timestamp, not a boolean, and stops
+ * having any effect once that moment passes.
+ *
+ * The flag exists so the upgrade does not strand transfers created under the
+ * old scheme, which stay claimable for 48 hours. But while it is set, the
+ * brute-forceable commitment this release fixes is still accepted — so the
+ * dangerous state is "someone forgot to remove it", and a runbook step saying
+ * "confirm you removed it" is not a control. An expiry that the code enforces
+ * is.
+ *
+ * `true` is still accepted for local development, where nothing is at stake.
+ * On a production chain it is refused at boot (lib/env.server.ts), which forces
+ * a deadline to be chosen up front.
+ */
 export function isLegacySchemeAllowed(): boolean {
-  return process.env.ALLOW_LEGACY_OTP_SCHEME === 'true'
+  const value = process.env.ALLOW_LEGACY_OTP_SCHEME
+  if (!value) return false
+  if (value === 'true') return true
+
+  const expiry = Date.parse(value)
+  if (Number.isNaN(expiry)) return false
+  return Date.now() < expiry
+}
+
+/** When the legacy window closes, or null if it is not time-bounded. */
+export function legacySchemeExpiresAt(): number | null {
+  const value = process.env.ALLOW_LEGACY_OTP_SCHEME
+  if (!value || value === 'true') return null
+  const expiry = Date.parse(value)
+  return Number.isNaN(expiry) ? null : expiry
 }

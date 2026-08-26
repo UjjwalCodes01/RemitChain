@@ -13,11 +13,11 @@ export { RemitChainAbi, EscrowVaultAbi, KYCRegistryAbi, ERC20Abi }
 const CONTRACT_ADDRESSES = {
   // Anvil (chainId 31337) — local development, written by DeployLocal.s.sol
   31337: {
-    remitChain:      '0xa513E6E4b8f2a923D98304ec87F64353C4D5C853' as const,
-    escrowVault:     '0x0165878A594ca255338adfa4d48449f69242Eb8F' as const,
-    kycRegistry:     '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707' as const,
+    remitChain:      '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9' as const,
+    escrowVault:     '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0' as const,
+    kycRegistry:     '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512' as const,
     timelockAddress: '0x0000000000000000000000000000000000000000' as const,
-    qusd:            '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9' as const,
+    qusd:            '0x5FbDB2315678afecb367f032d93F642f64180aa3' as const,
     feeTreasury:     '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65' as const,
   },
   // QIE Testnet (chainId 1983)
@@ -80,3 +80,21 @@ export const QUSD_DECIMALS = 6 as const
 
 /** Whether the app is targeting a production mainnet */
 export const IS_MAINNET = _chainId === 1990
+
+/**
+ * Block each deployment went live at — where the event listener starts from.
+ *
+ * Written from the deployedAtBlock field in the contracts/deployments files.
+ * This used to be a hand-maintained table in lib/events/listener.ts, so a
+ * redeploy that nobody remembered to follow up on left the listener scanning
+ * the previous contract's history from its old start height.
+ *
+ * The value is the block the deploy script simulated against, which is at or
+ * just before the block the contracts actually landed in. Starting a block or
+ * two early costs one wasted scan; starting late silently loses events.
+ */
+export const DEPLOYMENT_BLOCKS: Record<number, bigint> = {
+  31337: 0n,
+  1983: 6444615n,
+  1990: 8537358n,
+}

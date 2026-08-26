@@ -50,6 +50,7 @@ contract DeployLocal is Script {
         string memory json = string.concat(
             '{\n  "network": "anvil",\n  "chainId": 31337,\n',
             '  "deployer": "', vm.toString(deployer), '",\n',
+            '  "deployedAtBlock": ', vm.toString(block.number), ',\n',
             '  "contracts": {\n',
             '    "TimelockController": "', vm.toString(address(0)), '",\n',
             '    "KYCRegistry": "', vm.toString(address(kyc)), '",\n',

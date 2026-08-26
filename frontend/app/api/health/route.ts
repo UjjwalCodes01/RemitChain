@@ -18,6 +18,7 @@ import { getRedis } from '@/lib/db/redis'
 import { describeCorridorReadiness } from '@/lib/payouts/registry'
 import { isEncryptionConfigured } from '@/lib/crypto/secretbox'
 import { isPhonePepperConfigured } from '@/lib/phone'
+import { getScreeningProvider } from '@/lib/compliance/screening'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -35,13 +36,15 @@ export async function GET() {
     (process.env.TWILIO_SID && process.env.TWILIO_AUTH_TOKEN),
   )
 
+  const screening = getScreeningProvider()
   const corridors = describeCorridorReadiness(IS_PRODUCTION_CHAIN)
   const openCorridors = corridors.filter(c => c.open)
   const liveCorridors = openCorridors.filter(c => c.live)
 
   // A send can only be honoured end to end if every one of these holds.
   const canAcceptTransfers =
-    database && relayer && encryption && phonePepper && notifications && openCorridors.length > 0
+    database && relayer && encryption && phonePepper && notifications &&
+    screening !== null && openCorridors.length > 0
 
   // On a production chain an open corridor must also be a LIVE one — a
   // simulated rail cannot settle real money.
@@ -61,6 +64,9 @@ export async function GET() {
       phonePepper: phonePepper ? 'configured' : 'MISSING PHONE_HASH_PEPPER',
       notifications: notifications ? 'configured' : 'MISSING — recipients cannot receive claim codes',
       cron: cron ? 'protected' : 'MISSING CRON_SECRET — scheduled jobs are unauthenticated',
+      screening: screening
+        ? `${screening.id}${screening.isLive ? '' : ' (not a live sanctions source)'}`
+        : 'MISSING SCREENING_PROVIDER — every send is blocked',
     },
     corridors,
     summary: {

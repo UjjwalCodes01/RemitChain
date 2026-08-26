@@ -52,6 +52,7 @@ import { keccak256, encodeAbiParameters, encodePacked, toHex, type Hex } from 'v
  *     metadata explicitly removes the dependency on how a given runtime
  *     resolves JSON.
  */
+import { isLegacySchemeAllowed } from '@/lib/claim-secret'
 import { parsePhoneNumberFromString as parseWithMetadata, type CountryCode } from 'libphonenumber-js/core'
 import metadata from 'libphonenumber-js/metadata.max.json'
 
@@ -180,7 +181,10 @@ export function computeLegacyPhoneHash(e164: string): Hex {
  */
 export function phoneHashCandidates(e164: string): Hex[] {
   const candidates: Hex[] = [computePhoneHash(e164)]
-  if (process.env.ALLOW_LEGACY_OTP_SCHEME === 'true') {
+  // Shares the cutover window with the OTP scheme, including its expiry — see
+  // lib/claim-secret.ts. Reading the raw env var here would have let the phone
+  // fallback outlive the OTP one.
+  if (isLegacySchemeAllowed()) {
     candidates.push(computeLegacyPhoneHash(e164))
   }
   return candidates
