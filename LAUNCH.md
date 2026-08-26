@@ -18,6 +18,7 @@ You do not have to remember these. The system refuses to run without them.
 | `rzp_test_` key on mainnet | `lib/payouts/registry.ts` | App throws at boot |
 | Live payouts without a webhook secret | `lib/payouts/registry.ts` | App throws at boot |
 | A corridor with no payout provider | `lib/corridors.ts` | Corridor cannot be selected; API returns 409 |
+| No fresh FX rate | `lib/fx/rates.ts` | Corridor closes; `/api/transfers/prepare` returns 503 |
 | MockQUSD on mainnet | `script/Deploy.s.sol` | Deployment reverts |
 | Multisig that is an EOA on mainnet | `script/Deploy.s.sol` | Deployment reverts |
 | Unverified wallet sending | `KYCRegistry.checkAndConsume` | Transaction reverts with `KYCRequired` |
@@ -232,6 +233,8 @@ amount:
 - [ ] **Confirm the rupees actually arrive in the destination account**
 - [ ] Confirm the amount matches the quote the sender was shown
 - [ ] Confirm the payout is the NET amount (gross minus the 0.1% fee)
+- [ ] Spot-check the quoted rate against a public source. `/api/corridors`
+      returns `rate`, `rateSource` and `rateAgeMs` for every corridor.
 
 The last three are the ones that matter. Everything before them can pass while
 money still fails to land.
@@ -275,6 +278,18 @@ Accept these deliberately, or address them before launch.
 3. **FX exposure.** The rate is locked at send time and honoured at claim, up to
    48 hours later. You carry the movement in between. At volume, hedge it or
    add a spread.
+
+   Rates come from two independent free sources (`open.er-api.com`, then
+   `currency-api` on jsDelivr) with failover, a Redis cache, and a sanity check
+   that rejects a feed whose median move against the last known rates exceeds
+   25%. There are no hard-coded fallback rates — when no rate is available
+   within `FX_MAX_STALENESS_MINUTES` (default 60), the corridor closes and sends
+   are refused.
+
+   **Before launch, consider a paid FX feed with an SLA.** Both current sources
+   are free and unsupported; if both are down for more than an hour, sending
+   stops. That is the correct failure (refusing beats paying the wrong amount),
+   but it is still downtime.
 4. **A stale `MANUAL_REVIEW` queue is a customer-service failure**, not a
    technical one. It needs an owner.
 5. **Single relayer.** No failover. If it goes down, claims stop. Senders can

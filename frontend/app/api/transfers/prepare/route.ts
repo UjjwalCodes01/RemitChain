@@ -37,7 +37,7 @@ import { computeTransferId } from '@/lib/transfer-id'
 import { generateClaimCredentials, deriveCommitment } from '@/lib/claim-secret'
 import { computePhoneHash, maskPhone, parsePhone } from '@/lib/phone'
 import { encryptSecret } from '@/lib/crypto/secretbox'
-import { quotePayout, seededQuotesAllowed } from '@/lib/fx/rates'
+import { quotePayout } from '@/lib/fx/rates'
 import { db, transfers } from '@/lib/db'
 import { getRedis } from '@/lib/db/redis'
 import { rateLimit } from '@/lib/ratelimit'
@@ -142,14 +142,11 @@ export async function POST(req: NextRequest) {
   }
 
   // ── FX quote, locked here and honoured at payout ──────────────────────────
+  // A null quote means no rate within the staleness bound. Refuse the send
+  // rather than quoting on data we cannot vouch for — a transfer that pays out
+  // the wrong amount is far worse than one that never starts.
   const quote = await quotePayout(netAmount, corridor.currency, corridor.minorUnits)
   if (!quote) {
-    return NextResponse.json(
-      { error: 'Exchange rates are temporarily unavailable. Please try again shortly.' },
-      { status: 503 },
-    )
-  }
-  if (quote.source === 'seeded' && !seededQuotesAllowed()) {
     return NextResponse.json(
       {
         error: 'Live exchange rates are temporarily unavailable, so we cannot quote this ' +

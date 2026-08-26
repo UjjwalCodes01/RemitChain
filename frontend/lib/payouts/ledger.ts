@@ -161,7 +161,8 @@ export async function enqueuePayout(
 interface PayoutQuote {
   amountMinor: number
   rate: string
-  source: 'quote' | 'live' | 'seeded'
+  /** 'quote' = the rate locked at send time; otherwise how it was sourced now. */
+  source: 'quote' | 'live' | 'cached'
 }
 
 /**
@@ -187,12 +188,14 @@ async function resolvePayoutAmount(
     }
   }
 
-  const { getFxRate } = await import('@/lib/fx/rates')
+  // No locked quote (a transfer that predates this field, or one reconstructed
+  // from chain). Price it now. A null rate means we genuinely do not know what
+  // to pay, so the payout is not created rather than guessed at.
+  const { getFxRate, convertToMinor } = await import('@/lib/fx/rates')
   const quote = await getFxRate(corridor.currency)
   if (!quote) return null
 
-  const usd = Number(input.netAmountBaseUnits) / 1_000_000
-  const amountMinor = Math.round(usd * quote.rate * corridor.minorUnits)
+  const amountMinor = convertToMinor(input.netAmountBaseUnits, quote.rate, corridor.minorUnits)
   if (!Number.isFinite(amountMinor) || amountMinor <= 0) return null
 
   return { amountMinor, rate: String(quote.rate), source: quote.source }

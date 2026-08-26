@@ -70,8 +70,11 @@ const serverSchema = z.object({
   // ── Escape hatches (all default to the safe value) ────────────────────────
   /** Accept the pre-upgrade low-entropy OTP scheme for in-flight transfers. */
   ALLOW_LEGACY_OTP_SCHEME: z.string().optional().transform(v => v === 'true').default('false'),
-  /** Allow a hard-coded FX rate to back a binding quote. */
-  ALLOW_SEEDED_FX_QUOTES: z.string().optional().transform(v => v === 'true').default('false'),
+  /**
+   * How old an FX rate may be and still back a binding quote, in minutes.
+   * Beyond it the corridor closes rather than quoting on stale data.
+   */
+  FX_MAX_STALENESS_MINUTES: z.coerce.number().int().positive().max(1440).default(60),
   /** Enable the simulated payout rail. Refused on a production chain. */
   ENABLE_SANDBOX_PAYOUTS: z.string().optional().transform(v => v === 'true').default('false'),
 })
@@ -137,10 +140,10 @@ function validateServerEnv(): ServerEnv {
       )
     }
 
-    if (data.ALLOW_SEEDED_FX_QUOTES) {
+    if (data.FX_MAX_STALENESS_MINUTES > 240) {
       console.warn(
-        '[env] ALLOW_SEEDED_FX_QUOTES is enabled on a production chain. Payouts may be ' +
-        'quoted from hard-coded rates that do not track the market.',
+        `[env] FX_MAX_STALENESS_MINUTES is ${data.FX_MAX_STALENESS_MINUTES} on a production ` +
+        'chain. Quotes may be backed by rates several hours old.',
       )
     }
   }

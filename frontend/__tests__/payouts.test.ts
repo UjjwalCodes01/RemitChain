@@ -254,9 +254,11 @@ describe('corridor gating', () => {
 
 // ─── Amount conversion ───────────────────────────────────────────────────────
 
+// The rate below is an arbitrary constant chosen to make the arithmetic easy to
+// read. It is NOT a market rate and must never be copied into application code —
+// see __tests__/fx.test.ts for why hard-coded rates were removed.
 describe('convertToMinor', () => {
   it('converts QUSD base units to paise at the given rate', () => {
-    // 100 QUSD at 83.45 → ₹8,345.00 → 834500 paise
     expect(convertToMinor(100_000_000n, 83.45, 100)).toBe(834_500)
   })
 

@@ -37,9 +37,10 @@ async function run() {
       feeAmount: '100000',      // 0.1%
       netAmount: '99900000',
       corridor: 'ae-in',
-      quotedRate: '83.45',
+      // Arbitrary fixture values — not a market rate.
+      quotedRate: '95.43',
       quotedCurrency: 'INR',
-      quotedLocalMinor: '833665500',
+      quotedLocalMinor: '953345700',
       quotedAt: twoHoursAgo,
       status: 0,
       notifyChannel: 'email',

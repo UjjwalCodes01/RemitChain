@@ -13,7 +13,7 @@ import { NextResponse } from 'next/server'
 import { IS_PRODUCTION_CHAIN } from '@/lib/env'
 import { CORRIDORS, resolveProviderId } from '@/lib/corridors'
 import { getProvider } from '@/lib/payouts/registry'
-import { getFxRate, seededQuotesAllowed } from '@/lib/fx/rates'
+import { getFxRate } from '@/lib/fx/rates'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -25,9 +25,9 @@ export async function GET() {
       const provider = providerId ? getProvider(providerId) : null
       const fx = await getFxRate(corridor.currency)
 
-      // A corridor is only sendable if it has a provider AND we can quote it.
-      const quotable = Boolean(fx && (fx.source === 'live' || seededQuotesAllowed()))
-      const open = providerId !== null && quotable
+      // A corridor is only sendable if it has a provider AND we hold a rate
+      // within the staleness bound. `getFxRate` returns null otherwise.
+      const open = providerId !== null && fx !== null
 
       return {
         id: corridor.id,
@@ -47,6 +47,7 @@ export async function GET() {
         live: provider?.isLive ?? false,
         rate: fx?.rate ?? null,
         rateSource: fx?.source ?? null,
+        rateAgeMs: fx?.ageMs ?? null,
         closedReason: open
           ? undefined
           : !providerId
